@@ -1,14 +1,5 @@
 import threading
 from elasticsearch import Elasticsearch
-from es_schema import (
-    recipe_collection_index,
-    paper_index,
-    guide_index,
-    policy_index,
-    organization_index,
-    person_index,
-    artifact_index,
-)
 from main import config
 from schemas import SearchSchema
 
@@ -37,35 +28,7 @@ class ElasticsearchClientSingleton:
     def _bootstrap(cls):
         """Create indices in Elasticsearch if they do not exist."""
         es = Elasticsearch(hosts=config.settings["ELASTIC_HOST"])
-        if not es.indices.exists(index="recipes"):
-            es.indices.create(
-                index="recipes", body=recipe_collection_index(config.settings["ES_DIM"])
-            )
-        if not es.indices.exists(index="guides"):
-            es.indices.create(
-                index="guides", body=guide_index(config.settings["ES_DIM"])
-            )
-        if not es.indices.exists(index="policies"):
-            es.indices.create(
-                index="policies", body=policy_index(config.settings["ES_DIM"])
-            )
-        if not es.indices.exists(index="artifacts"):
-            es.indices.create(
-                index="artifacts", body=artifact_index(config.settings["ES_DIM"])
-            )
-        if not es.indices.exists(index="papers"):
-            es.indices.create(
-                index="papers", body=paper_index(config.settings["ES_DIM"])
-            )
-        if not es.indices.exists(index="organizations"):
-            es.indices.create(
-                index="organizations",
-                body=organization_index(config.settings["ES_DIM"]),
-            )
-        if not es.indices.exists(index="persons"):
-            es.indices.create(
-                index="persons", body=person_index(config.settings["ES_DIM"])
-            )
+       
 
     @classmethod
     def _initialize_elasticsearch(cls):
