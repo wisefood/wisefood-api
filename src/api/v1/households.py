@@ -223,14 +223,12 @@ class HouseholdEntity(Entity):
         self,
         db: AsyncSession,
         entity_id: str,
-        purge: bool = False,
     ) -> bool:
         """
         Delete a household.
 
         :param db: Database session
         :param entity_id: The household ID
-        :param purge: Whether to permanently delete (not used in this implementation)
         :return: True if deleted
         """
         result = await db.execute(
