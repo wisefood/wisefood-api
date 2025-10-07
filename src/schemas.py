@@ -8,6 +8,30 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, EmailStr
 from enum import Enum
 
+# ------- System Schemas -------
+class SearchSchema(BaseModel):
+    q: Optional[str] = Field(
+        default=None, description="Search query string"
+    )
+    limit: int = Field(
+        default=10, ge=1, le=100, description="Maximum number of results to return"
+    )
+    offset: int = Field(
+        default=0, ge=0, description="Number of results to skip for pagination"
+    )
+    fl: Optional[List[str]] = Field(
+        default=None, description="List of fields to include in the response"
+    )
+    fq: Optional[List[str]] = Field(
+        default=None, description="List of filter queries (e.g., 'status:active')"
+    )
+    sort: Optional[str] = Field(
+        default=None, description="Sort order (e.g., 'created_at desc')"
+    )
+    fields: Optional[List[str]] = Field(
+        default=None, description="List of fields to aggregate for faceting"
+    )
+
 
 # ---------- Enums ----------
 
@@ -153,7 +177,3 @@ class HouseholdResponse(HouseholdBase):
 
 class HouseholdDetailResponse(HouseholdResponse):
     members: List[HouseholdMemberResponse] = Field(default_factory=list)
-
-
-# Update forward references
-HouseholdDetailResponse.model_rebuild()

@@ -5,10 +5,8 @@ from __future__ import annotations
 
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import auth
-from backend.postgres import get_db
 from exceptions import NotFoundError, AuthorizationError, ConflictError
 from routers.generic import render
 from schemas import (
@@ -36,7 +34,6 @@ router = APIRouter(prefix="/api/v1/households", tags=["Households"])
 async def create_household(
     request: Request,
     household_data: HouseholdCreate,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdDetailResponse:
     """
@@ -49,7 +46,7 @@ async def create_household(
     spec = household_data.model_dump()
 
     # Create household using entity
-    household = await HOUSEHOLD.create(db, spec, token_payload)
+    household = await HOUSEHOLD.create(spec, token_payload)
 
     return HouseholdDetailResponse(**household)
 
@@ -58,13 +55,12 @@ async def create_household(
 @render()
 async def get_my_household(
     request: Request,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdDetailResponse:
     """Get the household that the authenticated user owns."""
     user_id = token_payload.get("sub")
 
-    household = await HOUSEHOLD.get_by_owner(db, user_id)
+    household = await HOUSEHOLD.get_by_owner(user_id)
     if not household:
         raise NotFoundError(detail="User does not own a household")
 
@@ -76,13 +72,12 @@ async def get_my_household(
 async def get_household(
     request: Request,
     household_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdDetailResponse:
     """Get household details by ID. User must be the owner."""
     user_id = token_payload.get("sub")
 
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
 
     # Check if user is the owner
     if household["owner_id"] != user_id:
@@ -97,13 +92,12 @@ async def update_household(
     request: Request,
     household_id: str,
     household_data: HouseholdUpdate,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdDetailResponse:
     """Update household details. Only the owner can update."""
     user_id = token_payload.get("sub")
 
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
 
     # Check if user is the owner
     if household["owner_id"] != user_id:
@@ -111,7 +105,7 @@ async def update_household(
 
     # Update household
     spec = household_data.model_dump(exclude_unset=True)
-    updated_household = await HOUSEHOLD.patch(db, household_id, spec)
+    updated_household = await HOUSEHOLD.patch(household_id, spec)
 
     return HouseholdDetailResponse(**updated_household)
 
@@ -121,20 +115,19 @@ async def update_household(
 async def delete_household(
     request: Request,
     household_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> Dict[str, str]:
     """Delete a household. Only the owner can delete."""
     user_id = token_payload.get("sub")
 
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
 
     # Check if user is the owner
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="Only the household owner can delete the household")
 
     # Delete household
-    await HOUSEHOLD.delete(db, household_id)
+    await HOUSEHOLD.delete(household_id)
 
     return {"message": "Household deleted successfully"}
 
@@ -143,7 +136,6 @@ async def delete_household(
 @render()
 async def list_households(
     request: Request,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
     limit: int = 100,
     offset: int = 0,
@@ -151,7 +143,7 @@ async def list_households(
     """List households owned by the authenticated user."""
     user_id = token_payload.get("sub")
 
-    households = await HOUSEHOLD.fetch(db, limit=limit, offset=offset, owner_id=user_id)
+    households = await HOUSEHOLD.fetch(limit=limit, offset=offset, owner_id=user_id)
     return [HouseholdResponse(**h) for h in households]
 
 
@@ -163,7 +155,6 @@ async def add_household_member(
     request: Request,
     household_id: str,
     member_data: HouseholdMemberCreate,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdMemberResponse:
     """
@@ -172,14 +163,13 @@ async def add_household_member(
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="Only the household owner can add members")
 
     # Add member
     spec = member_data.model_dump()
-    member = await HOUSEHOLD.add_member(db, household_id, spec)
-    await db.commit()
+    member = await HOUSEHOLD.add_member(household_id, spec)
 
     return HouseholdMemberResponse(**member)
 
@@ -189,18 +179,17 @@ async def add_household_member(
 async def list_household_members(
     request: Request,
     household_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> List[HouseholdMemberResponse]:
     """List all members of a household. User must be the owner."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="You are not the owner of this household")
 
-    members = await HOUSEHOLD.list_members(db, household_id)
+    members = await HOUSEHOLD.list_members(household_id)
     return [HouseholdMemberResponse(**m) for m in members]
 
 
@@ -210,18 +199,17 @@ async def get_household_member(
     request: Request,
     household_id: str,
     member_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdMemberResponse:
     """Get a household member by ID. User must be the owner."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="You are not the owner of this household")
 
-    member = await HOUSEHOLD.get_member(db, member_id)
+    member = await HOUSEHOLD.get_member(member_id)
 
     # Verify member belongs to this household
     if member["household_id"] != household_id:
@@ -237,26 +225,24 @@ async def update_household_member(
     household_id: str,
     member_id: str,
     member_data: HouseholdMemberUpdate,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdMemberResponse:
     """Update a household member. Only the owner can update."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="Only the household owner can update members")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(db, member_id)
+    member = await HOUSEHOLD.get_member(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Update member
     spec = member_data.model_dump(exclude_unset=True)
-    updated_member = await HOUSEHOLD.update_member(db, member_id, spec)
-    await db.commit()
+    updated_member = await HOUSEHOLD.update_member(member_id, spec)
 
     return HouseholdMemberResponse(**updated_member)
 
@@ -267,25 +253,23 @@ async def delete_household_member(
     request: Request,
     household_id: str,
     member_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> Dict[str, str]:
     """Delete a household member. Only the owner can delete."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="Only the household owner can delete members")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(db, member_id)
+    member = await HOUSEHOLD.get_member(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Delete member
-    await HOUSEHOLD.remove_member(db, member_id)
-    await db.commit()
+    await HOUSEHOLD.remove_member(member_id)
 
     return {"message": "Member deleted successfully"}
 
@@ -299,26 +283,24 @@ async def update_member_profile(
     household_id: str,
     member_id: str,
     profile_data: HouseholdMemberProfileCreate,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdMemberProfileResponse:
     """Create or update a household member's profile. Only the owner can update."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="Only the household owner can update member profiles")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(db, member_id)
+    member = await HOUSEHOLD.get_member(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Create/update profile
     spec = profile_data.model_dump()
-    profile = await HOUSEHOLD.update_member_profile(db, member_id, spec)
-    await db.commit()
+    profile = await HOUSEHOLD.update_member_profile(member_id, spec)
 
     return HouseholdMemberProfileResponse(**profile)
 
@@ -329,24 +311,23 @@ async def get_member_profile(
     request: Request,
     household_id: str,
     member_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdMemberProfileResponse:
     """Get a household member's profile. User must be the owner."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="You are not the owner of this household")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(db, member_id)
+    member = await HOUSEHOLD.get_member(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Get profile
-    profile = await HOUSEHOLD.get_member_profile(db, member_id)
+    profile = await HOUSEHOLD.get_member_profile(member_id)
     if not profile:
         raise NotFoundError(detail="Profile not found for this member")
 
@@ -359,24 +340,22 @@ async def delete_member_profile(
     request: Request,
     household_id: str,
     member_id: str,
-    db: AsyncSession = Depends(get_db),
     token_payload: Dict[str, Any] = Depends(auth()),
 ) -> Dict[str, str]:
     """Delete a household member's profile. Only the owner can delete."""
     user_id = token_payload.get("sub")
 
     # Check if user is the owner
-    household = await HOUSEHOLD.get(db, household_id)
+    household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
         raise AuthorizationError(detail="Only the household owner can delete member profiles")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(db, member_id)
+    member = await HOUSEHOLD.get_member(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Delete profile
-    await HOUSEHOLD.delete_member_profile(db, member_id)
-    await db.commit()
+    await HOUSEHOLD.delete_member_profile(member_id)
 
     return {"message": "Profile deleted successfully"}

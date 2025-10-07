@@ -101,7 +101,7 @@ class Household(Base):
     owner_id = mapped_column(String(100), nullable=False, index=True)
     created_at = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    metadata = mapped_column(JSONB, nullable=True, default=dict)
+    metadata_ = mapped_column("metadata", JSONB, nullable=True, default=dict)
 
     # Relationships
     members: Mapped[List["HouseholdMember"]] = relationship(
@@ -116,7 +116,7 @@ class Household(Base):
             "owner_id": self.owner_id,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "metadata": self.metadata or {},
+            "metadata": self.metadata_ or {},
             "member_count": len(self.members),
         }
         if include_members:
