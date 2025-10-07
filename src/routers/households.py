@@ -1,9 +1,13 @@
 """
 Household management endpoints
 """
-from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, Request
 
+from typing import Dict, Any, List
+from sqlalchemy import text
+from fastapi import APIRouter, Depends, Request
+import kutils
+import logging
+import asyncio
 from auth import auth
 from exceptions import NotFoundError, AuthorizationError, ConflictError
 from routers.generic import render
@@ -21,18 +25,21 @@ from schemas import (
 )
 from api.v1.households import HOUSEHOLD
 
+logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/households", tags=["Households Management Operations"])
+router = APIRouter(
+    prefix="/api/v1/households", tags=["Households Management Operations"]
+)
 
 
 # ========== Household Endpoints ==========
 
-@router.post("", response_model=HouseholdDetailResponse)
+
+@router.post("", dependencies=[Depends(auth())], response_model=HouseholdDetailResponse)
 @render()
-async def create_household(
+async def api_create_household(
     request: Request,
     household_data: HouseholdCreate,
-    token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdDetailResponse:
     """
     Create a new household.
@@ -40,34 +47,34 @@ async def create_household(
     The authenticated user becomes the owner.
     Users can only own one household at a time.
     """
-    # Convert Pydantic model to dict
-    spec = household_data.model_dump()
 
     # Create household using entity
-    household = await HOUSEHOLD.create(spec, token_payload)
+    household = await HOUSEHOLD.create(
+        household_data.model_dump(), kutils.current_user(request)
+    )
 
     return HouseholdDetailResponse(**household)
 
 
-@router.get("/me", response_model=HouseholdDetailResponse)
+@router.get(
+    "/me", dependencies=[Depends(auth())], response_model=HouseholdDetailResponse
+)
 @render()
-async def get_my_household(
+async def api_get_my_household(
     request: Request,
-    token_payload: Dict[str, Any] = Depends(auth()),
 ) -> HouseholdDetailResponse:
     """Get the household that the authenticated user owns."""
-    user_id = token_payload.get("sub")
-
-    household = await HOUSEHOLD.get_by_owner(user_id)
+    id = kutils.current_user(request).get("sub")
+    household = await HOUSEHOLD.get_by_owner(id)
     if not household:
         raise NotFoundError(detail="User does not own a household")
 
-    return HouseholdDetailResponse(**household)
+    return HouseholdDetailResponse(household)
 
 
 @router.get("/{household_id}", response_model=HouseholdDetailResponse)
 @render()
-async def get_household(
+async def api_get_household(
     request: Request,
     household_id: str,
     token_payload: Dict[str, Any] = Depends(auth()),
@@ -86,7 +93,7 @@ async def get_household(
 
 @router.patch("/{household_id}", response_model=HouseholdDetailResponse)
 @render()
-async def update_household(
+async def api_patch_household(
     request: Request,
     household_id: str,
     household_data: HouseholdUpdate,
@@ -110,7 +117,7 @@ async def update_household(
 
 @router.delete("/{household_id}")
 @render()
-async def delete_household(
+async def api_delete_household(
     request: Request,
     household_id: str,
     token_payload: Dict[str, Any] = Depends(auth()),
@@ -122,7 +129,9 @@ async def delete_household(
 
     # Check if user is the owner
     if household["owner_id"] != user_id:
-        raise AuthorizationError(detail="Only the household owner can delete the household")
+        raise AuthorizationError(
+            detail="Only the household owner can delete the household"
+        )
 
     # Delete household
     await HOUSEHOLD.delete(household_id)
@@ -132,7 +141,7 @@ async def delete_household(
 
 @router.get("", response_model=List[HouseholdResponse])
 @render()
-async def list_households(
+async def api_list_households(
     request: Request,
     token_payload: Dict[str, Any] = Depends(auth()),
     limit: int = 100,
@@ -147,9 +156,10 @@ async def list_households(
 
 # ========== Household Member Endpoints ==========
 
+
 @router.post("/{household_id}/members", response_model=HouseholdMemberResponse)
 @render()
-async def add_household_member(
+async def api_add_household_member(
     request: Request,
     household_id: str,
     member_data: HouseholdMemberCreate,
@@ -174,7 +184,7 @@ async def add_household_member(
 
 @router.get("/{household_id}/members", response_model=List[HouseholdMemberResponse])
 @render()
-async def list_household_members(
+async def api_list_household_members(
     request: Request,
     household_id: str,
     token_payload: Dict[str, Any] = Depends(auth()),
@@ -191,9 +201,11 @@ async def list_household_members(
     return [HouseholdMemberResponse(**m) for m in members]
 
 
-@router.get("/{household_id}/members/{member_id}", response_model=HouseholdMemberResponse)
+@router.get(
+    "/{household_id}/members/{member_id}", response_model=HouseholdMemberResponse
+)
 @render()
-async def get_household_member(
+async def api_get_household_member(
     request: Request,
     household_id: str,
     member_id: str,
@@ -216,9 +228,11 @@ async def get_household_member(
     return HouseholdMemberResponse(**member)
 
 
-@router.patch("/{household_id}/members/{member_id}", response_model=HouseholdMemberResponse)
+@router.patch(
+    "/{household_id}/members/{member_id}", response_model=HouseholdMemberResponse
+)
 @render()
-async def update_household_member(
+async def api_update_household_member(
     request: Request,
     household_id: str,
     member_id: str,
@@ -247,7 +261,7 @@ async def update_household_member(
 
 @router.delete("/{household_id}/members/{member_id}")
 @render()
-async def delete_household_member(
+async def api_delete_household_member(
     request: Request,
     household_id: str,
     member_id: str,
@@ -274,9 +288,13 @@ async def delete_household_member(
 
 # ========== Household Member Profile Endpoints ==========
 
-@router.put("/{household_id}/members/{member_id}/profile", response_model=HouseholdMemberProfileResponse)
+
+@router.put(
+    "/{household_id}/members/{member_id}/profile",
+    response_model=HouseholdMemberProfileResponse,
+)
 @render()
-async def update_member_profile(
+async def api_update_member_profile(
     request: Request,
     household_id: str,
     member_id: str,
@@ -289,7 +307,9 @@ async def update_member_profile(
     # Check if user is the owner
     household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
-        raise AuthorizationError(detail="Only the household owner can update member profiles")
+        raise AuthorizationError(
+            detail="Only the household owner can update member profiles"
+        )
 
     # Verify member belongs to this household
     member = await HOUSEHOLD.get_member(member_id)
@@ -303,9 +323,12 @@ async def update_member_profile(
     return HouseholdMemberProfileResponse(**profile)
 
 
-@router.get("/{household_id}/members/{member_id}/profile", response_model=HouseholdMemberProfileResponse)
+@router.get(
+    "/{household_id}/members/{member_id}/profile",
+    response_model=HouseholdMemberProfileResponse,
+)
 @render()
-async def get_member_profile(
+async def api_get_member_profile(
     request: Request,
     household_id: str,
     member_id: str,
@@ -334,7 +357,7 @@ async def get_member_profile(
 
 @router.delete("/{household_id}/members/{member_id}/profile")
 @render()
-async def delete_member_profile(
+async def api_delete_member_profile(
     request: Request,
     household_id: str,
     member_id: str,
@@ -346,7 +369,9 @@ async def delete_member_profile(
     # Check if user is the owner
     household = await HOUSEHOLD.get(household_id)
     if household["owner_id"] != user_id:
-        raise AuthorizationError(detail="Only the household owner can delete member profiles")
+        raise AuthorizationError(
+            detail="Only the household owner can delete member profiles"
+        )
 
     # Verify member belongs to this household
     member = await HOUSEHOLD.get_member(member_id)
