@@ -245,6 +245,24 @@ class Entity:
         identifier = self.get_identifier(entity_id)
         return self.get_cached(identifier)
 
+    async def aget_cached(self, entity_id: str) -> Dict[str, Any]:
+        obj = None
+        if config.settings.get("CACHE_ENABLED", False):
+            try:
+                obj = REDIS.get(entity_id) 
+            except Exception as e:
+                logging.error(f"Failed to get cached entity {entity_id}: {e}")
+
+        if obj is None:
+            obj = await self.get(entity_id) 
+            self.cache(entity_id, obj)
+
+        return self.dump_schema.model_validate(obj).model_dump(mode="json")
+
+    async def aget_entity(self, entity_id: str) -> Dict[str, Any]:
+        identifier = self.get_identifier(entity_id)
+        return await self.aget_cached(identifier)
+
     def get(self, entity_id: str) -> Dict[str, Any]:
         """
         Get an entity by its ID or UUID.
@@ -266,6 +284,17 @@ class Entity:
         """
         self.create(spec, creator)
         return self.get_entity(spec.get("id"))
+    
+    async def acreate_entity(self, spec, creator) -> Dict[str, Any]:
+        """
+        Create a new entity bundler method.
+
+        :param spec: The data for the new entity.
+        :param creator: The dict of the creator user fetched from header.
+        :return: The created entity.
+        """
+        self.create(spec, creator)
+        return await self.aget_entity(spec.get("id"))
 
     def create(self, spec, creator) -> None:
         """
