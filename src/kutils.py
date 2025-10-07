@@ -141,12 +141,10 @@ def introspect_admin_token(access_token):
             detail="Token is missing realm access information",
         )
 
-    # Check if the token has admin privileges.
-    is_admin_flag = introspect_response.get("is_admin", None)
-    if is_admin_flag is None or not is_admin_flag:
-        raise AuthorizationError(
-            detail="Bearer Token is not related to an admin user",
-        )
+    # Check if the token has admin role
+    roles = introspect_response["realm_access"].get("roles", [])
+    if "admin" not in roles:
+        raise AuthorizationError(detail="User is not an admin")
 
     return True
 
@@ -180,6 +178,24 @@ def current_user(request: Request) -> Optional[Dict]:
     if token:
         return get_user_by_token(token)
     return None
+
+def is_admin(request: Request) -> bool:
+    """
+    Checks if the current user is an admin based on the access token in the request headers.
+
+    Args:
+        request (Request): The incoming HTTP request.
+    Returns:
+        bool: True if the user is an admin, otherwise False.
+    """
+    token = current_token(request)
+    if token:
+        try:
+            introspect_admin_token(token)
+            return True
+        except (AuthenticationError, AuthorizationError):
+            return False
+    return False
 
 def get_token(username, password):
     """

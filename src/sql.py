@@ -2,7 +2,7 @@
 SQLAlchemy models and database access methods for WiseFood API
 """
 from __future__ import annotations
-
+from sqlalchemy import inspect as sa_inspect
 from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import uuid4
@@ -117,10 +117,23 @@ class Household(Base):
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "metadata": self.metadata_ or {},
-            "member_count": len(self.members),
         }
+
+        insp = sa_inspect(self)
+
+        # Only include members if requested AND already loaded
         if include_members:
-            result["members"] = [m.to_dict(include_profile=True) for m in self.members]
+            if "members" not in insp.unloaded:
+                members = [m.to_dict(include_profile=True) for m in self.members]
+                result["members"] = members
+                result["member_count"] = len(members)
+            else:
+                result["members"] = []
+                result["member_count"] = 0
+        else:
+            # Don't touch relationship at all
+            result["member_count"] = 0
+
         return result
 
 

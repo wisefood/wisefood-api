@@ -3,6 +3,7 @@ Household Entity implementation with full CRUD operations
 """
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from uuid import uuid4
@@ -109,7 +110,11 @@ class HouseholdEntity(Entity):
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
             result = await db.execute(
-                select(Household).where(Household.id == entity_id)
+                select(Household)
+                .options(
+                    selectinload(Household.members).selectinload(HouseholdMember.profile)
+                )
+                .where(Household.id == entity_id)
             )
             household = result.scalar_one_or_none()
 
@@ -127,7 +132,13 @@ class HouseholdEntity(Entity):
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
             result = await db.execute(
-                select(Household).where(Household.owner_id == owner_id)
+                select(Household)
+                .options(
+                    selectinload(Household.members).selectinload(HouseholdMember.profile)
+                )
+                .where(Household.owner_id == owner_id)
+                .order_by(Household.created_at.desc())
+                .limit(1)
             )
             household = result.scalar_one_or_none()
 
@@ -175,6 +186,14 @@ class HouseholdEntity(Entity):
                 await self._add_member_in_session(db, household_id, member_data)
 
             await db.commit()
+            result = await db.execute(
+                select(Household)
+                .options(
+                    selectinload(Household.members).selectinload(HouseholdMember.profile)
+                )
+                .where(Household.id == household_id)
+            )
+            household = result.scalar_one()
             return household.to_dict(include_members=True)
 
     async def patch(

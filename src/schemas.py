@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ------- System Schemas -------
@@ -108,11 +108,15 @@ class HouseholdMemberBase(BaseModel):
     age_group: AgeGroupEnum
     image_url: Optional[str] = None
 
+    @field_validator("age_group", mode="before")
+    @classmethod
+    def _norm_age_group(cls, v):
+        return v.strip().lower()
 
 class HouseholdMemberCreate(HouseholdMemberBase):
     profile: Optional[HouseholdMemberProfileCreate] = None
 
-
+ 
 class HouseholdMemberUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     age_group: Optional[AgeGroupEnum] = None
