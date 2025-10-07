@@ -365,7 +365,7 @@ async def api_update_member_profile(
     "/{household_id}/members/{member_id}/profile",
     dependencies=[Depends(auth())],
     summary="Get a household member's profile",
-    descriptions="Get a household member's profile by ID. User must be the owner or admin.",
+    description="Get a household member's profile by ID. User must be the owner or admin.",
 )
 @render()
 async def api_get_member_profile(
@@ -397,7 +397,7 @@ async def api_get_member_profile(
 @router.delete(
     "/{household_id}/members/{member_id}/profile", dependencies=[Depends(auth())], 
     summary="Delete a household member's profile",
-    descriptions="Delete a household member's profile by ID. Only the owner or the administrator can delete."
+    description="Delete a household member's profile by ID. Only the owner or the administrator can delete."
 )
 @render()
 async def api_delete_member_profile(
