@@ -22,6 +22,10 @@ class SearchSchema(BaseModel):
     sort: Optional[str] = Field(default=None, description="Sort order (e.g., 'created_at desc')")
     fields: Optional[List[str]] = Field(default=None, description="List of fields to aggregate for faceting")
 
+class LoginSchema(BaseModel):
+    username: str = Field(..., description="Username or email")
+    password: str = Field(..., description="Password")
+
 
 # ---------- Enums ----------
 class AgeGroupEnum(str, Enum):
