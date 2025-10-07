@@ -1,8 +1,6 @@
 """
 Household management endpoints
 """
-from __future__ import annotations
-
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, Request
 
@@ -24,7 +22,7 @@ from schemas import (
 from api.v1.households import HOUSEHOLD
 
 
-router = APIRouter(prefix="/api/v1/households", tags=["Households"])
+router = APIRouter(prefix="/api/v1/households", tags=["Households Management Operations"])
 
 
 # ========== Household Endpoints ==========

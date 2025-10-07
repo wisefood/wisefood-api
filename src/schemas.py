@@ -1,40 +1,29 @@
 """
-Pydantic schemas for API request/response validation
+Pydantic schemas for API request/response validation (no forward refs)
+- No `from __future__ import annotations`
+- Define classes in dependency order (profile -> member -> household)
+- No `.model_rebuild()` calls needed
 """
-from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, EmailStr
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, ConfigDict
+
 
 # ------- System Schemas -------
 class SearchSchema(BaseModel):
-    q: Optional[str] = Field(
-        default=None, description="Search query string"
-    )
-    limit: int = Field(
-        default=10, ge=1, le=100, description="Maximum number of results to return"
-    )
-    offset: int = Field(
-        default=0, ge=0, description="Number of results to skip for pagination"
-    )
-    fl: Optional[List[str]] = Field(
-        default=None, description="List of fields to include in the response"
-    )
-    fq: Optional[List[str]] = Field(
-        default=None, description="List of filter queries (e.g., 'status:active')"
-    )
-    sort: Optional[str] = Field(
-        default=None, description="Sort order (e.g., 'created_at desc')"
-    )
-    fields: Optional[List[str]] = Field(
-        default=None, description="List of fields to aggregate for faceting"
-    )
+    q: Optional[str] = Field(default=None, description="Search query string")
+    limit: int = Field(default=10, ge=1, le=100, description="Maximum number of results to return")
+    offset: int = Field(default=0, ge=0, description="Number of results to skip for pagination")
+    fl: Optional[List[str]] = Field(default=None, description="List of fields to include in the response")
+    fq: Optional[List[str]] = Field(default=None, description="List of filter queries (e.g., 'status:active')")
+    sort: Optional[str] = Field(default=None, description="Sort order (e.g., 'created_at desc')")
+    fields: Optional[List[str]] = Field(default=None, description="List of fields to aggregate for faceting")
 
 
 # ---------- Enums ----------
-
 class AgeGroupEnum(str, Enum):
     """Age groups for household members"""
     CHILD = "child"
@@ -85,7 +74,6 @@ class DietaryGroupEnum(str, Enum):
 
 
 # ---------- Household Member Profile Schemas ----------
-
 class HouseholdMemberProfileBase(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
     dietary_groups: Optional[List[DietaryGroupEnum]] = Field(default_factory=list)
@@ -106,12 +94,11 @@ class HouseholdMemberProfileResponse(HouseholdMemberProfileBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    # Pydantic v2 style (equivalent to v1's Config.from_attributes = True)
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------- Household Member Schemas ----------
-
 class HouseholdMemberBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     age_group: AgeGroupEnum
@@ -126,6 +113,8 @@ class HouseholdMemberUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     age_group: Optional[AgeGroupEnum] = None
     image_url: Optional[str] = None
+    # Allow partial update of the nested profile if your PATCH endpoint accepts it
+    profile: Optional[HouseholdMemberProfileUpdate] = None
 
 
 class HouseholdMemberResponse(HouseholdMemberBase):
@@ -134,12 +123,10 @@ class HouseholdMemberResponse(HouseholdMemberBase):
     joined_at: datetime
     profile: Optional[HouseholdMemberProfileResponse] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------- Household Schemas ----------
-
 class HouseholdBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Household name")
 
@@ -148,11 +135,11 @@ class HouseholdCreate(HouseholdBase):
     region: Optional[str] = Field(None, max_length=100)
     metadata: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
-        description="Household metadata (preferences, settings, etc.)"
+        description="Household metadata (preferences, settings, etc.)",
     )
     members: Optional[List[HouseholdMemberCreate]] = Field(
         default_factory=list,
-        description="Initial household members to create"
+        description="Initial household members to create",
     )
 
 
@@ -171,8 +158,7 @@ class HouseholdResponse(HouseholdBase):
     updated_at: datetime
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HouseholdDetailResponse(HouseholdResponse):
