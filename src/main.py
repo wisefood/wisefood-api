@@ -56,6 +56,15 @@ class Config:
         )
         self.settings["REDIS_HOST"] = os.getenv("REDIS_HOST", "redis")
         self.settings["REDIS_PORT"] = int(os.getenv("REDIS_PORT", 6379))
+        self.settings["POSTGRES_HOST"] = os.getenv("POSTGRES_HOST", "localhost")
+        self.settings["POSTGRES_PORT"] = int(os.getenv("POSTGRES_PORT", 5432))
+        self.settings["POSTGRES_USER"] = os.getenv("POSTGRES_USER", "postgres")
+        self.settings["POSTGRES_PASSWORD"] = os.getenv("POSTGRES_PASSWORD", "postgres")
+        self.settings["POSTGRES_DB"] = os.getenv("POSTGRES_DB", "wisefood")
+        self.settings["POSTGRES_POOL_SIZE"] = int(os.getenv("POSTGRES_POOL_SIZE", 10))
+        self.settings["POSTGRES_MAX_OVERFLOW"] = int(
+            os.getenv("POSTGRES_MAX_OVERFLOW", 20)
+        )
 
 
 # Configure application settings
@@ -75,6 +84,11 @@ api = FastAPI(
 
 # Initiliaze exception handlers
 install_error_handler(api)
+
+# Register routers
+from routers.households import router as households_router
+
+api.include_router(households_router)
 
 
 if __name__ == "__main__":
