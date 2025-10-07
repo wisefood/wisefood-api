@@ -36,7 +36,7 @@ router = APIRouter(
     "",
     dependencies=[Depends(auth())],
     summary="Create a new household",
-    descriptions="Create a new household. The authenticated user becomes the owner.",
+    description="Create a new household. The authenticated user becomes the owner.",
 )
 @render()
 async def api_create_household(
@@ -62,7 +62,7 @@ async def api_create_household(
     "/me",
     dependencies=[Depends(auth())],
     summary="Get my household",
-    descriptions="Get the household that the authenticated user owns.",
+    description="Get the household that the authenticated user owns.",
 )
 @render()
 async def api_get_my_household(
@@ -81,7 +81,7 @@ async def api_get_my_household(
     "/{household_id}",
     dependencies=[Depends(auth())],
     summary="Get household details",
-    descriptions="Get household details by ID. User must be the owner or admin.",
+    description="Get household details by ID. User must be the owner or admin.",
 )
 @render()
 async def api_get_household(
@@ -104,7 +104,7 @@ async def api_get_household(
     "/{household_id}",
     dependencies=[Depends(auth())],
     summary="Update household details",
-    descriptions="Update household details by ID. Only the owner or the administrator can update.",
+    description="Update household details by ID. Only the owner or the administrator can update.",
 )
 @render()
 async def api_patch_household(
@@ -132,7 +132,7 @@ async def api_patch_household(
     "/{household_id}",
     dependencies=[Depends(auth())],
     summary="Delete a household",
-    descriptions="Delete a household by ID. Only the owner or the administrator can delete.",
+    description="Delete a household by ID. Only the owner or the administrator can delete.",
 )
 @render()
 async def api_delete_household(
@@ -160,7 +160,7 @@ async def api_delete_household(
     "",
     dependencies=[Depends(auth("admin"))],
     summary="List all households (admin only)",
-    descriptions="List all households in the system. Admin only.",
+    description="List all households in the system. Admin only.",
 )
 @render()
 async def api_list_households(
@@ -182,7 +182,7 @@ async def api_list_households(
     "/{household_id}/members",
     dependencies=[Depends(auth())],
     summary="Add a member to a household",
-    descriptions="Add a member to the household. Only the owner or the administrator can add members.",
+    description="Add a member to the household. Only the owner or the administrator can add members.",
 )
 @render()
 async def api_add_household_member(
@@ -210,7 +210,7 @@ async def api_add_household_member(
     "/{household_id}/members",
     dependencies=[Depends(auth())],
     summary="List household members",
-    descriptions="List all members of a household. User must be the owner or admin.",
+    description="List all members of a household. User must be the owner or admin.",
 )
 @render()
 async def api_list_household_members(
@@ -233,7 +233,7 @@ async def api_list_household_members(
     "/{household_id}/members/{member_id}",
     dependencies=[Depends(auth())],
     summary="Get a household member by ID",
-    descriptions="Get a household member by ID. User must be the owner or admin.",
+    description="Get a household member by ID. User must be the owner or admin.",
 )
 @render()
 async def api_get_household_member(
@@ -262,7 +262,7 @@ async def api_get_household_member(
     "/{household_id}/members/{member_id}",
     dependencies=[Depends(auth())],
     summary="Update a household member",
-    descriptions="Update a household member by ID. Only the owner or the administrator can update.",
+    description="Update a household member by ID. Only the owner or the administrator can update.",
 )
 @render()
 async def api_update_household_member(
@@ -296,7 +296,7 @@ async def api_update_household_member(
     "/{household_id}/members/{member_id}",
     dependencies=[Depends(auth())],
     summary="Delete a household member",
-    descriptions="Delete a household member by ID. Only the owner or the administrator can delete.",
+    description="Delete a household member by ID. Only the owner or the administrator can delete.",
 )
 @render()
 async def api_delete_household_member(
@@ -330,7 +330,7 @@ async def api_delete_household_member(
     "/{household_id}/members/{member_id}/profile",
     dependencies=[Depends(auth())],
     summary="Create or update a household member's profile",
-    descriptions="Create or update a household member's profile. Only the owner or the administrator can update.",
+    description="Create or update a household member's profile. Only the owner or the administrator can update.",
 )
 @render()
 async def api_update_member_profile(
