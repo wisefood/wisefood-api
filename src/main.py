@@ -1,8 +1,14 @@
 import os
 from fastapi import FastAPI
 from routers.generic import install_error_handler
+from contextlib import asynccontextmanager
+from sqlalchemy import text
 import uvicorn
 import logsys
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 # Configuration context
@@ -75,21 +81,44 @@ config.setup()
 logsys.configure()
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- STARTUP ---
+    logger.info("App startup: warming up DB")
+    from backend.postgres import POSTGRES_ASYNC_ENGINE
+    eng = POSTGRES_ASYNC_ENGINE()
+    async with eng.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+    logger.info("Database connection OK")
+
+    # yield control to the application runtime
+    yield
+
+    # --- SHUTDOWN ---
+    logger.info("App shutdown: closing DB connections")
+    from backend.postgres import PostgresConnectionSingleton
+    await PostgresConnectionSingleton.close()
+    logger.info("DB connections closed")
+
 # create FastAPI app
 api = FastAPI(
     title="WiseFood API",
     version="0.0.1",
     root_path=config.settings["CONTEXT_PATH"],
+    lifespan=lifespan,
 )
 
-# Initiliaze exception handlers
+# Initialize exception handlers
 install_error_handler(api)
 
 # Register routers
 from routers.households import router as households_router
+from routers.core import router as core_router
+from routers.foodscholar import router as foodscholar_router
 
 api.include_router(households_router)
-
+api.include_router(core_router)
+api.include_router(foodscholar_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration
