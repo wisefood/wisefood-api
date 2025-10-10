@@ -8,7 +8,7 @@ CREATE SCHEMA IF NOT EXISTS wisefood;
 DO $$
 BEGIN 
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'age_groups') THEN
-        CREATE TYPE age_groups AS ENUM ('child', 'teen', 'adult', 'senior');
+        CREATE TYPE age_groups AS ENUM ('child', 'teen', 'adult', 'senior', 'young_adult', 'middle_aged', 'baby');
     END IF;
 END $$;
 

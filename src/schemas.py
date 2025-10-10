@@ -34,6 +34,9 @@ class AgeGroupEnum(str, Enum):
     TEEN = "teen"
     ADULT = "adult"
     SENIOR = "senior"
+    YOUNG_ADULT = "young_adult"
+    MIDDLE_AGED = "middle_aged"
+    BABY = "baby"
 
 
 class DietaryGroupEnum(str, Enum):
@@ -81,6 +84,7 @@ class DietaryGroupEnum(str, Enum):
 class HouseholdMemberProfileBase(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
     dietary_groups: Optional[List[DietaryGroupEnum]] = Field(default_factory=list)
+    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class HouseholdMemberProfileCreate(HouseholdMemberProfileBase):
@@ -171,3 +175,9 @@ class HouseholdResponse(HouseholdBase):
 
 class HouseholdDetailResponse(HouseholdResponse):
     members: List[HouseholdMemberResponse] = Field(default_factory=list)
+
+
+# ---------- FoodScholar Schemas ----------
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, description="User message to send to Food Scholar")
