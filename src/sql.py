@@ -30,53 +30,56 @@ from backend.postgres import Base
 
 # ---------- Enums ----------
 
+
 class AgeGroup(str, enum.Enum):
-    """Age groups for household members"""
-    CHILD = "child"
-    TEEN = "teen"
-    ADULT = "adult"
-    SENIOR = "senior"
+    """Age groups for household members (single source of truth)"""
+    baby = "baby"
+    child = "child"
+    teen = "teen"
+    young_adult = "young_adult"
+    adult = "adult"
+    middle_aged = "middle_aged"
+    senior = "senior"
 
 
 class DietaryGroup(str, enum.Enum):
     """Dietary preferences and restrictions"""
-    OMNIVORE = "omnivore"
-    VEGETARIAN = "vegetarian"
-    LACTO_VEGETARIAN = "lacto_vegetarian"
-    OVO_VEGETARIAN = "ovo_vegetarian"
-    LACTO_OVO_VEGETARIAN = "lacto_ovo_vegetarian"
-    PESCATARIAN = "pescatarian"
-    VEGAN = "vegan"
-    RAW_VEGAN = "raw_vegan"
-    PLANT_BASED = "plant_based"
-    FLEXITARIAN = "flexitarian"
-    HALAL = "halal"
-    KOSHER = "kosher"
-    JAIN = "jain"
-    BUDDHIST_VEGETARIAN = "buddhist_vegetarian"
-    GLUTEN_FREE = "gluten_free"
-    NUT_FREE = "nut_free"
-    PEANUT_FREE = "peanut_free"
-    DAIRY_FREE = "dairy_free"
-    EGG_FREE = "egg_free"
-    SOY_FREE = "soy_free"
-    SHELLFISH_FREE = "shellfish_free"
-    FISH_FREE = "fish_free"
-    SESAME_FREE = "sesame_free"
-    LOW_CARB = "low_carb"
-    LOW_FAT = "low_fat"
-    LOW_SODIUM = "low_sodium"
-    SUGAR_FREE = "sugar_free"
-    NO_ADDED_SUGAR = "no_added_sugar"
-    HIGH_PROTEIN = "high_protein"
-    HIGH_FIBER = "high_fiber"
-    LOW_CHOLESTEROL = "low_cholesterol"
-    LOW_CALORIE = "low_calorie"
-    KETO = "keto"
-    PALEO = "paleo"
-    WHOLE30 = "whole30"
-    MEDITERRANEAN = "mediterranean"
-    DIABETIC_FRIENDLY = "diabetic_friendly"
+    omnivore = "omnivore"
+    vegetarian = "vegetarian"
+    lacto_vegetarian = "lacto_vegetarian"
+    ovo_vegetarian = "ovo_vegetarian"
+    lacto_ovo_vegetarian = "lacto_ovo_vegetarian"
+    pescatarian = "pescatarian"
+    vegan = "vegan"
+    raw_vegan = "raw_vegan"
+    plant_based = "plant_based"
+    flexitarian = "flexitarian"
+    halal = "halal"
+    kosher = "kosher"
+    jain = "jain"
+    buddhist_vegetarian = "buddhist_vegetarian"
+    gluten_free = "gluten_free"
+    nut_free = "nut_free"
+    peanut_free = "peanut_free"
+    dairy_free = "dairy_free"
+    egg_free = "egg_free"
+    soy_free = "soy_free"
+    shellfish_free = "shellfish_free"
+    fish_free = "fish_free"
+    sesame_free = "sesame_free"
+    low_carb = "low_carb"
+    low_fat = "low_fat"
+    low_sodium = "low_sodium"
+    sugar_free = "sugar_free"
+    no_added_sugar = "no_added_sugar"
+    high_protein = "high_protein"
+    high_fiber = "high_fiber"
+    low_cholesterol = "low_cholesterol"
+    low_calorie = "low_calorie"
+    keto = "keto"
+    paleo = "paleo"
+    whole30 = "whole30"
+    mediterranean = "mediterranean"
 
 
 # ---------- SQLAlchemy Models ----------
@@ -169,8 +172,11 @@ class HouseholdMember(Base):
             "household_id": self.household_id,
             "joined_at": self.joined_at.isoformat(),
         }
-        if include_profile and self.profile:
-            result["profile"] = self.profile.to_dict()
+        if include_profile:
+            insp = sa_inspect(self)
+            if "profile" not in insp.unloaded and self.profile:
+                result["profile"] = self.profile.to_dict()
+            # else: do not touch relationship; avoid triggering IO
         return result
 
 

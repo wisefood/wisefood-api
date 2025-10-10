@@ -30,13 +30,13 @@ class LoginSchema(BaseModel):
 # ---------- Enums ----------
 class AgeGroupEnum(str, Enum):
     """Age groups for household members"""
-    CHILD = "child"
-    TEEN = "teen"
-    ADULT = "adult"
-    SENIOR = "senior"
-    YOUNG_ADULT = "young_adult"
-    MIDDLE_AGED = "middle_aged"
-    BABY = "baby"
+    child = "child"
+    teen = "teen"
+    adult = "adult"
+    senior = "senior"
+    young_adult = "young_adult"
+    middle_aged = "middle_aged"
+    baby = "baby"
 
 
 class DietaryGroupEnum(str, Enum):
