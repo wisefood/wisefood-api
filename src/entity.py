@@ -293,7 +293,7 @@ class Entity:
         :param creator: The dict of the creator user fetched from header.
         :return: The created entity.
         """
-        self.create(spec, creator)
+        spec = await self.create(spec, creator)
         return await self.aget_entity(spec.get("id"))
 
     def create(self, spec, creator) -> None:
