@@ -106,7 +106,7 @@ class FoodScholar:
             member_profile = await HOUSEHOLD.get_member_profile(member_id)
             if member_profile:
                 context += f"Name: {member.get('name', 'Unknown member')}"
-                context += f", Age: {member_profile.get('age_group', 'Unknown age group')}"
+                context += f", Age: {member.get('age_group', 'Unknown age group')}"
                 context += f", Gender: {member_profile.get('nutritional_preferences', {}).get('gender', 'Unknown gender')}"
                 context += f" with profile: dietary groups: {', '.join(member_profile.get('dietary_groups', []))}"
                 context += f" with nutritional preferences: {member_profile.get('nutritional_preferences', {}).get('notes', '')}"
