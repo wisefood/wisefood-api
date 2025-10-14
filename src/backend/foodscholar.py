@@ -3,6 +3,9 @@ import httpx
 from typing import Any, Dict, Optional
 from main import config
 from api.v1.households import HOUSEHOLD
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FoodScholar:
@@ -35,9 +38,13 @@ class FoodScholar:
         return cls
 
     @classmethod
-    async def get(cls, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs):
+    async def get(
+        cls, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs
+    ):
         if cls._client is None:
-            raise RuntimeError("FoodScholar client not initialized. Call get_client() first.")
+            raise RuntimeError(
+                "FoodScholar client not initialized. Call get_client() first."
+            )
         response = await cls._client.get(endpoint, params=params, **kwargs)
         response.raise_for_status()
         return response.json()
@@ -45,7 +52,9 @@ class FoodScholar:
     @classmethod
     async def post(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
         if cls._client is None:
-            raise RuntimeError("FoodScholar client not initialized. Call get_client() first.")
+            raise RuntimeError(
+                "FoodScholar client not initialized. Call get_client() first."
+            )
         response = await cls._client.post(endpoint, data=data, json=json, **kwargs)
         response.raise_for_status()
         return response.json()
@@ -53,7 +62,9 @@ class FoodScholar:
     @classmethod
     async def put(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
         if cls._client is None:
-            raise RuntimeError("FoodScholar client not initialized. Call get_client() first.")
+            raise RuntimeError(
+                "FoodScholar client not initialized. Call get_client() first."
+            )
         response = await cls._client.put(endpoint, data=data, json=json, **kwargs)
         response.raise_for_status()
         return response.json()
@@ -61,7 +72,9 @@ class FoodScholar:
     @classmethod
     async def delete(cls, endpoint: str, **kwargs):
         if cls._client is None:
-            raise RuntimeError("FoodScholar client not initialized. Call get_client() first.")
+            raise RuntimeError(
+                "FoodScholar client not initialized. Call get_client() first."
+            )
         response = await cls._client.delete(endpoint, **kwargs)
         response.raise_for_status()
         return response.json() if response.text else {"status": "deleted"}
@@ -75,6 +88,7 @@ class FoodScholar:
     @classmethod
     async def status(cls):
         return await cls.get("/")
+
     @classmethod
     async def get_user_sessions(cls, user_id: str):
         return await cls.get(f"/user/{user_id}/sessions")
@@ -85,16 +99,25 @@ class FoodScholar:
 
     @classmethod
     async def create_session(cls, user: dict, member_id: Optional[str] = None):
-        if member_id:
-            member_profile = await HOUSEHOLD.get_member_profile(member_id)
-            if member_profile and "name" in member_profile:
-                user = member_profile
 
+        context = "Name: " + user.get("name", "Anonymous")
+        if member_id:
+            member = await HOUSEHOLD.get_member(member_id)
+            member_profile = await HOUSEHOLD.get_member_profile(member_id)
+            if member_profile:
+                context += f"Name: {member.get('name', 'Unknown member')}"
+                context += f", Age: {member_profile.get('age_group', 'Unknown age group')}"
+                context += f", Gender: {member_profile.get('nutritional_preferences', {}).get('gender', 'Unknown gender')}"
+                context += f" with profile: dietary groups: {', '.join(member_profile.get('dietary_groups', []))}"
+                context += f" with nutritional preferences: {member_profile.get('nutritional_preferences', {}).get('notes', '')}"
+
+
+        logger.debug(context)
         spec = {
             "session_id": str(uuid.uuid4()),
-            "user_context": user["name"] if "name" in user else "Anonymous",
-            "user_id": user['sub'],
-            "max_history": 20
+            "user_context": str(context),
+            "user_id": user["sub"],
+            "max_history": 20,
         }
         return await FOODSCHOLAR.post("/start", json=spec)
 
@@ -102,7 +125,7 @@ class FoodScholar:
     async def chat_message(cls, session_id: str, user: dict, message: str):
         spec = {
             "session_id": session_id,
-            "user_id": user['sub'],
+            "user_id": user["sub"],
             "message": message,
         }
         return await FOODSCHOLAR.post("/chat", json=spec)
