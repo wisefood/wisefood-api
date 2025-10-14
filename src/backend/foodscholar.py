@@ -1,6 +1,8 @@
+import uuid
 import httpx
 from typing import Any, Dict, Optional
 from main import config
+from api.v1.households import HOUSEHOLD
 
 
 class FoodScholar:
@@ -69,6 +71,41 @@ class FoodScholar:
         if cls._client:
             await cls._client.aclose()
             cls._client = None
+
+    @classmethod
+    async def status(cls):
+        return await cls.get("/")
+    @classmethod
+    async def get_user_sessions(cls, user_id: str):
+        return await cls.get(f"/user/{user_id}/sessions")
+
+    @classmethod
+    async def get_session_history(cls, user_id: str, session_id: str):
+        return await cls.get(f"/user/{user_id}/session/{session_id}/history")
+
+    @classmethod
+    async def create_session(cls, user: dict, member_id: Optional[str] = None):
+        if member_id:
+            member_profile = await HOUSEHOLD.get_member_profile(member_id)
+            if member_profile and "name" in member_profile:
+                user = member_profile
+
+        spec = {
+            "session_id": str(uuid.uuid4()),
+            "user_context": user["name"] if "name" in user else "Anonymous",
+            "user_id": user['sub'],
+            "max_history": 20
+        }
+        return await FOODSCHOLAR.post("/start", json=spec)
+
+    @classmethod
+    async def chat_message(cls, session_id: str, user: dict, message: str):
+        spec = {
+            "session_id": session_id,
+            "user_id": user['sub'],
+            "message": message,
+        }
+        return await FOODSCHOLAR.post("/chat", json=spec)
 
 
 FOODSCHOLAR = FoodScholar.get_client()
