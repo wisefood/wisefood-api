@@ -102,15 +102,20 @@ class FoodScholar:
 
         context = "Name: " + user.get("name", "Anonymous")
         if member_id:
+            household = await HOUSEHOLD.get_by_owner(user["sub"])
             member = await HOUSEHOLD.get_member(member_id)
             member_profile = await HOUSEHOLD.get_member_profile(member_id)
             if member_profile:
                 context += f"Name: {member.get('name', 'Unknown member')}"
+                context += f", Region (ISO-3166-1 alpha-2): {household.get('region', 'Unknown region')}"
                 context += f", Age: {member.get('age_group', 'Unknown age group')}"
                 context += f", Gender: {member_profile.get('nutritional_preferences', {}).get('gender', 'Unknown gender')}"
                 context += f" with profile: dietary groups: {', '.join(member_profile.get('dietary_groups', []))}"
-                context += f" with nutritional preferences: {member_profile.get('nutritional_preferences', {}).get('notes', '')}"
-
+                dietary_preferences = member_profile.get('nutritional_preferences', {}).get('dietary_preferences', {})
+                preferences_text = []
+                for category, items in dietary_preferences.items():
+                    preferences_text.append(f"{category}: " + ", ".join([f"{item} ({preference})" for item, preference in items.items()]))
+                context += f" with nutritional preferences: {member_profile.get('nutritional_preferences', {}).get('notes', '')}. Dietary preferences: " + "; ".join(preferences_text)
 
         logger.debug(context)
         spec = {
