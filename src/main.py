@@ -32,6 +32,8 @@ class Config:
         )
         self.settings["ES_DIM"] = int(os.getenv("ES_DIM", 384))
         self.settings["FOODSCHOLAR_URL"] = os.getenv("FOODSCHOLAR_URL", "http://foodscholar:8001")
+        self.settings["RECIPEWRANGLER_URL"] = os.getenv("RECIPEWRANGLER_URL", "http://recipewrangler:8001")
+        self.settings["FOODCHAT_URL"] = os.getenv("FOODCHAT_URL", "http://foodchat:8001")
         self.settings["MINIO_ENDPOINT"] = os.getenv(
             "MINIO_ENDPOINT", "http://minio:9000"
         )
