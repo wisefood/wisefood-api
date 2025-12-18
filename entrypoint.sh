@@ -15,21 +15,29 @@ if [ "${1:-}" = "init-db" ] || [ "${INITIALIZE_DB:-}" = "1" ]; then
         exit 3
     fi
 
-    URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_DB}"
-
-    echo "[WISEFOOD] Initializing database from $SCHEMA_FILE..."
+    # First use the root user to grant privileges for keycloak schema to wisefood user
+    ROOT_URL="postgresql://${PG_ROOT_USER}:${PG_ROOT_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_DB}"
+    echo "[WISEFOOD] Granting privileges to user ${POSTGRES_USER}..."
+    psql "$ROOT_URL" "-v" "ON_ERROR_STOP=on" "-c" "GRANT ALL PRIVILEGES ON SCHEMA ${KEYCLOAK_SCHEMA} TO ${POSTGRES_USER};"
+    psql "$ROOT_URL" "-v" "ON_ERROR_STOP=on" "-c" "GRANT SELECT, REFERENCES ON ALL TABLES IN SCHEMA ${KEYCLOAK_SCHEMA} TO ${POSTGRES_USER};"
     
+    # Wait 10 seconds to ensure that the Postgres server is ready
+    echo "[WISEFOOD] Waiting for Postgres server to be ready..."
+    sleep 10
+
+    URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_DB}"
+    echo "[WISEFOOD] Initializing database from $SCHEMA_FILE..."
     for sql_file in /app/schemas/*.sql; do
         if [ -f "$sql_file" ]; then  
-            echo "Executing $sql_file..."
+            echo "[WISEFOOD] Executing $sql_file..."
             psql "$URL" "-v" "ON_ERROR_STOP=on" "-f" "$sql_file"
             
             if [ $? -ne 0 ]; then
-                echo "Error executing $sql_file"
+                echo "[WISEFOOD] Error executing $sql_file"
                 exit 1
             fi
         else
-            echo "No SQL files found in /app/schemas."
+            echo "[WISEFOOD] No SQL files found in /app/schemas."
         fi
     done
 
