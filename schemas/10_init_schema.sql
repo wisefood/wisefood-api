@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS wisefood.household (
     region VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    owner_id VARCHAR(100) NOT NULL REFERENCES keycloak.user_entity(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    owner_id VARCHAR(100) NOT NULL,
     metadata JSONB DEFAULT '{}',
     FOREIGN KEY (owner_id) REFERENCES keycloak.user_entity(id) ON DELETE SET NULL ON UPDATE CASCADE
 );
