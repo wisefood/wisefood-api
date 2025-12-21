@@ -129,11 +129,13 @@ install_error_handler(api)
 
 # Register routers
 from routers.households import router as households_router
+from routers.household_members import router as household_members_router
 from routers.core import router as core_router
 from routers.foodscholar import router as foodscholar_router
 from routers.recipewrangler import router as recipewrangler_router
 
 api.include_router(households_router)
+api.include_router(household_members_router)
 api.include_router(core_router)
 api.include_router(foodscholar_router)
 api.include_router(recipewrangler_router)

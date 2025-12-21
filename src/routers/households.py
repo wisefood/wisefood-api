@@ -21,6 +21,7 @@ from schemas import (
     HouseholdMemberProfileResponse,
 )
 from api.v1.households import HOUSEHOLD
+from api.v1.household_members import HOUSEHOLD_MEMBER
 
 logger = logging.getLogger(__name__)
 
@@ -199,9 +200,10 @@ async def api_add_household_member(
     if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
         raise AuthorizationError(detail="Only the household owner can add members")
 
-    # Add member
+    # Add member using the HOUSEHOLD_MEMBER entity
     spec = member_data.model_dump()
-    member = await HOUSEHOLD.add_member(household_id, spec)
+    spec["household_id"] = household_id
+    member = await HOUSEHOLD_MEMBER.acreate_entity(spec, user)
 
     return HouseholdMemberResponse(**member)
 
@@ -225,7 +227,7 @@ async def api_list_household_members(
     if household["owner_id"] != id and not kutils.is_admin(request):
         raise AuthorizationError(detail="You are not the owner of this household")
 
-    members = await HOUSEHOLD.list_members(household_id)
+    members = await HOUSEHOLD_MEMBER.fetch(household_id=household_id)
     return [HouseholdMemberResponse(**m) for m in members]
 
 
@@ -249,7 +251,7 @@ async def api_get_household_member(
     if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
         raise AuthorizationError(detail="You are not the owner of this household")
 
-    member = await HOUSEHOLD.get_member(member_id)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
 
     # Verify member belongs to this household
     if member["household_id"] != household_id:
@@ -281,13 +283,13 @@ async def api_update_household_member(
         raise AuthorizationError(detail="Only the household owner can update members")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(member_id)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Update member
     spec = member_data.model_dump(exclude_unset=True)
-    updated_member = await HOUSEHOLD.update_member(member_id, spec)
+    updated_member = await HOUSEHOLD_MEMBER.patch(member_id, spec)
 
     return HouseholdMemberResponse(**updated_member)
 
@@ -313,12 +315,12 @@ async def api_delete_household_member(
         raise AuthorizationError(detail="Only the household owner can delete members")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(member_id)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Delete member
-    await HOUSEHOLD.remove_member(member_id)
+    await HOUSEHOLD_MEMBER.delete(member_id)
 
     return {"message": "Member deleted successfully"}
 
@@ -350,13 +352,13 @@ async def api_update_member_profile(
         )
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(member_id)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Create/update profile
     spec = profile_data.model_dump()
-    profile = await HOUSEHOLD.update_member_profile(member_id, spec)
+    profile = await HOUSEHOLD_MEMBER.update_member_profile(member_id, spec)
 
     return HouseholdMemberProfileResponse(**profile)
 
@@ -382,12 +384,12 @@ async def api_get_member_profile(
         raise AuthorizationError(detail="You are not the owner of this household")
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(member_id)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Get profile
-    profile = await HOUSEHOLD.get_member_profile(member_id)
+    profile = await HOUSEHOLD_MEMBER.get_member_profile(member_id)
     if not profile:
         raise NotFoundError(detail="Profile not found for this member")
 
@@ -416,11 +418,11 @@ async def api_delete_member_profile(
         )
 
     # Verify member belongs to this household
-    member = await HOUSEHOLD.get_member(member_id)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
     if member["household_id"] != household_id:
         raise NotFoundError(detail="Member not found in this household")
 
     # Delete profile
-    await HOUSEHOLD.delete_member_profile(member_id)
+    await HOUSEHOLD_MEMBER.delete_member_profile(member_id)
 
     return {"message": "Profile deleted successfully"}

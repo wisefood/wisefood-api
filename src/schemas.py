@@ -120,7 +120,13 @@ class HouseholdMemberBase(BaseModel):
 class HouseholdMemberCreate(HouseholdMemberBase):
     profile: Optional[HouseholdMemberProfileCreate] = None
 
- 
+
+class HouseholdMemberCreateWithHousehold(HouseholdMemberBase):
+    """Schema for creating a member with explicit household_id"""
+    household_id: str = Field(..., description="The household this member belongs to")
+    profile: Optional[HouseholdMemberProfileCreate] = None
+
+
 class HouseholdMemberUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     age_group: Optional[AgeGroupEnum] = None
