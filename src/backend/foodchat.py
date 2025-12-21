@@ -8,22 +8,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class RecipeWrangler:
-    """Singleton HTTP client for accessing the RecipeWrangler API with connection pooling."""
+class FoodChat:
+    """Singleton HTTP client for accessing the FoodChat API with connection pooling."""
 
     _client: Optional[httpx.AsyncClient] = None
 
     @classmethod
     def get_client(
         cls,
-        base_url: str = config.settings["RECIPEWRANGLER_URL"],
+        base_url: str = config.settings["FOODCHAT_URL"],
         timeout: float = 15.0,
         max_connections: int = 15,
         max_keepalive_connections: int = 7,
         verify: bool = True,
         http2: bool = True,
-    ) -> "RecipeWrangler":
-        """Get or create a singleton RecipeWrangler client instance."""
+    ) -> "FoodChat":
+        """Get or create a singleton FoodChat client instance."""
         if cls._client is None:
             cls._client = httpx.AsyncClient(
                 base_url=base_url.rstrip("/"),
@@ -43,7 +43,7 @@ class RecipeWrangler:
     ):
         if cls._client is None:
             raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
+                "FoodChat client not initialized. Call get_client() first."
             )
         response = await cls._client.get(endpoint, params=params, **kwargs)
         response.raise_for_status()
@@ -53,7 +53,7 @@ class RecipeWrangler:
     async def post(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
         if cls._client is None:
             raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
+                "FoodChat client not initialized. Call get_client() first."
             )
         response = await cls._client.post(endpoint, data=data, json=json, **kwargs)
         response.raise_for_status()
@@ -63,7 +63,7 @@ class RecipeWrangler:
     async def put(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
         if cls._client is None:
             raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
+                "FoodChat client not initialized. Call get_client() first."
             )
         response = await cls._client.put(endpoint, data=data, json=json, **kwargs)
         response.raise_for_status()
@@ -73,7 +73,7 @@ class RecipeWrangler:
     async def delete(cls, endpoint: str, **kwargs):
         if cls._client is None:
             raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
+                "FoodChat client not initialized. Call get_client() first."
             )
         response = await cls._client.delete(endpoint, **kwargs)
         response.raise_for_status()
@@ -89,4 +89,4 @@ class RecipeWrangler:
     async def status(cls):
         return await cls.get("/health")
 
-RECIPEWRANGLER = RecipeWrangler.get_client()
+FOODCHAT = FoodChat.get_client()
