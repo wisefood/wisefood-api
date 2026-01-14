@@ -3,7 +3,7 @@ from routers.generic import render
 from typing import Optional
 import logging
 from auth import auth
-from schemas import ChatRequest
+from schemas import ChatRequest, SummarizeRequest
 import kutils
 from backend.foodscholar import FOODSCHOLAR
 
@@ -45,3 +45,15 @@ async def chat(request: Request, session_id: str, body: ChatRequest):
     message = body.message
     user = kutils.current_user(request)
     return await FOODSCHOLAR.chat_message(session_id, user, message)
+
+
+@router.post("/search/summarize", dependencies=[Depends(auth())])
+@render()
+async def search_summarize(request: Request, body: SummarizeRequest):
+    return await FOODSCHOLAR.get_search_summary(
+        query=body.query,
+        results=body.results,
+        language=body.language,
+        user_id=body.user_id,
+        expertise_level=body.expertise_level
+    )

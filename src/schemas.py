@@ -187,3 +187,12 @@ class HouseholdDetailResponse(HouseholdResponse):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User message to send to Food Scholar")
+
+
+class SummarizeRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Search query string")
+    results: List[Dict[str, Any]] = Field(..., description="List of search result items")
+    user_id: Optional[str] = Field(None, description="User ID for context")
+    language: Optional[str] = Field("en", description="Language code for the summary")
+    expertise_level: Optional[str] = Field("general", description="Expertise level of the user")
+    

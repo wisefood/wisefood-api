@@ -136,4 +136,12 @@ class FoodScholar:
         return await FOODSCHOLAR.post("/chat", json=spec)
 
 
+    @classmethod
+    async def get_search_summary(cls, query: str, results: list, language: str, user_id: str, expertise_level: str):
+        spec = {
+            "results": results,
+            "query": query
+        }
+        return await FOODSCHOLAR.post("/search/summarize", json=spec)
+
 FOODSCHOLAR = FoodScholar.get_client()
