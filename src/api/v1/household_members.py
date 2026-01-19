@@ -54,7 +54,7 @@ class HouseholdMemberEntity(Entity):
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
             query = select(HouseholdMember).options(
-                selectinload(HouseholdMember.profile)
+            selectinload(HouseholdMember.profile)
             )
 
             if household_id:
@@ -62,14 +62,13 @@ class HouseholdMemberEntity(Entity):
 
             query = query.order_by(HouseholdMember.joined_at.desc())
 
+            if offset:
+                query = query.offset(offset)
+            if limit:
+                query = query.limit(limit)
+
             result = await db.execute(query)
             members = list(result.scalars().all())
-
-            # Apply pagination
-            if offset:
-                members = members[offset:]
-            if limit:
-                members = members[:limit]
 
             return [m.to_dict(include_profile=True) for m in members]
 
@@ -88,23 +87,20 @@ class HouseholdMemberEntity(Entity):
         :return: List of member IDs
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
-            query = select(HouseholdMember)
+            query = select(HouseholdMember.id)
 
             if household_id:
                 query = query.where(HouseholdMember.household_id == household_id)
 
             query = query.order_by(HouseholdMember.joined_at.desc())
 
-            result = await db.execute(query)
-            members = list(result.scalars().all())
-
-            # Apply pagination
             if offset:
-                members = members[offset:]
+                query = query.offset(offset)
             if limit:
-                members = members[:limit]
+                query = query.limit(limit)
 
-            return [m.id for m in members]
+            result = await db.execute(query)
+            return result.scalars().all()
 
     async def get(self, entity_id: str) -> Dict[str, Any]:
         """
