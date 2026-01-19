@@ -369,13 +369,39 @@ class HouseholdMemberEntity(Entity):
         profile_data: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Update a member's profile (creates if doesn't exist).
+        Update a member's profile.
 
         :param member_id: The member ID
         :param profile_data: Profile update data
         :return: Updated profile dictionary
         """
-        return await self.create_member_profile(member_id, profile_data)
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(HouseholdMemberProfile).where(
+                    HouseholdMemberProfile.household_member_id == member_id
+                )
+            )
+            profile = result.scalar_one_or_none()
+
+            if not profile:
+                raise NotFoundError(f"Profile for household member {member_id} not found")
+
+            if "nutritional_preferences" in profile_data:
+                profile.nutritional_preferences = profile_data["nutritional_preferences"]
+            if "dietary_groups" in profile_data:
+                dietary_groups = profile_data["dietary_groups"]
+                if dietary_groups:
+                    profile.dietary_groups = [
+                        DietaryGroup(dg) if isinstance(dg, str) else dg
+                        for dg in dietary_groups
+                    ]
+                else:
+                    profile.dietary_groups = []
+            
+            profile.updated_at = datetime.now(timezone.utc)
+            await db.flush()
+            await db.commit()
+            return profile.to_dict()
 
     async def delete_member_profile(
         self,

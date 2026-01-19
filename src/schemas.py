@@ -94,6 +94,7 @@ class HouseholdMemberProfileCreate(HouseholdMemberProfileBase):
 class HouseholdMemberProfileUpdate(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = None
     dietary_groups: Optional[List[DietaryGroupEnum]] = None
+    properties: Optional[Dict[str, Any]] = None
 
 
 class HouseholdMemberProfileResponse(HouseholdMemberProfileBase):

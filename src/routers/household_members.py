@@ -14,6 +14,7 @@ from schemas import (
     HouseholdMemberUpdate,
     HouseholdMemberResponse,
     HouseholdMemberProfileCreate,
+    HouseholdMemberProfileUpdate,
     HouseholdMemberProfileResponse,
 )
 from api.v1.household_members import HOUSEHOLD_MEMBER
@@ -165,17 +166,38 @@ async def api_delete_member(
 # ========== Household Member Profile Endpoints ==========
 
 
-@router.put(
+@router.post(
     "/{member_id}/profile",
     dependencies=[Depends(auth())],
-    summary="Create or update a household member's profile",
-    description="Create or update a household member's profile. User must be the household owner or admin.",
+    summary="Create a household member's profile",
+    description="Create a household member's profile. User must be the household owner or admin.",
 )
 @render()
-async def api_update_member_profile(
+async def api_create_member_profile(
     request: Request,
     member_id: str,
     profile_data: HouseholdMemberProfileCreate,
+):
+    """Create a household member's profile. User must have access."""
+    await verify_member_access(request, member_id)
+
+    # Create profile
+    spec = profile_data.model_dump()
+    profile = await HOUSEHOLD_MEMBER.create_member_profile(member_id, spec)
+
+    return HouseholdMemberProfileResponse(**profile)
+
+@router.patch(
+    "/{member_id}/profile",
+    dependencies=[Depends(auth())],
+    summary="Update a household member's profile",
+    description="Update a household member's profile. User must be the household owner or admin.",
+)
+@render()
+async def api_patch_member_profile(
+    request: Request,
+    member_id: str,
+    profile_data: HouseholdMemberProfileUpdate,
 ):
     """Create or update a household member's profile. User must have access."""
     await verify_member_access(request, member_id)
