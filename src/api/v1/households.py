@@ -55,16 +55,16 @@ class HouseholdEntity(Entity):
             query = select(Household)
             if owner_id:
                 query = query.where(Household.owner_id == owner_id)
+            
             query = query.order_by(Household.created_at.desc())
+            
+            if offset:
+                query = query.offset(offset)
+            if limit:
+                query = query.limit(limit)
 
             result = await db.execute(query)
             households = list(result.scalars().all())
-
-            # Apply pagination
-            if offset:
-                households = households[offset:]
-            if limit:
-                households = households[:limit]
 
             return [h.to_dict() for h in households]
 
@@ -83,21 +83,19 @@ class HouseholdEntity(Entity):
         :return: List of household IDs
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
-            query = select(Household)
+            query = select(Household.id)
             if owner_id:
                 query = query.where(Household.owner_id == owner_id)
+            
             query = query.order_by(Household.created_at.desc())
+            
+            if offset:
+                query = query.offset(offset)
+            if limit:
+                query = query.limit(limit)
 
             result = await db.execute(query)
-            households = list(result.scalars().all())
-
-            # Apply pagination
-            if offset:
-                households = households[offset:]
-            if limit:
-                households = households[:limit]
-
-            return [h.id for h in households]
+            return list(result.scalars().all())
 
     async def get(self, entity_id: str) -> Dict[str, Any]:
         """
