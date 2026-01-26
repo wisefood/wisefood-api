@@ -396,6 +396,9 @@ class HouseholdMemberEntity(Entity):
                     ]
                 else:
                     profile.dietary_groups = []
+
+            if "properties" in profile_data:
+                profile.properties = profile_data["properties"]
             
             profile.updated_at = datetime.now(timezone.utc)
             await db.flush()
