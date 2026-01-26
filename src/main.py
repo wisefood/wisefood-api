@@ -11,8 +11,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 origins = [
-    "https://wisefood.gr:8083",   
     "https://wisefood.gr",
+    "http://localhost:3000"
 ]
 
 # Configuration context

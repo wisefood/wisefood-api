@@ -4,6 +4,7 @@ Household management endpoints
 
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, Request
+from httpx import request
 import kutils
 import logging
 from auth import auth
@@ -31,6 +32,34 @@ router = APIRouter(
 
 
 # ========== Household Endpoints ==========
+
+
+async def verify_access(
+    request: Request, household_id: str, member_id: str = None
+) -> Dict[str, Any]:
+    """
+    Verify that the current user has access to the household.
+    Raises AuthorizationError if access is denied.
+    Returns the member data if member_id is provided, else None.
+    """
+    user = kutils.current_user(request)
+
+    member = None
+    if member_id:
+        member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
+        household_id = member["household_id"]
+
+    household = await HOUSEHOLD.aget_entity(household_id)
+
+    # Check if user is the owner or admin or AI agent
+    if (
+        household["owner_id"] != user["sub"]
+        and not kutils.is_admin(request)
+        and not kutils.is_agent(request)
+    ):
+        raise AuthorizationError(detail="You do not have access to this member")
+
+    return (member, household) if member_id else household
 
 
 @router.post(
@@ -90,13 +119,10 @@ async def api_get_household(
     household_id: str,
 ):
     """Get household details by ID. User must be the owner."""
-    user = kutils.current_user(request)
+
+    await verify_access(request, household_id)
 
     household = await HOUSEHOLD.aget_entity(household_id)
-
-    # Check if user is the owner or admin
-    if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
-        raise AuthorizationError(detail="You are not the owner of this household")
 
     return HouseholdDetailResponse(**household)
 
@@ -114,13 +140,8 @@ async def api_patch_household(
     household_data: HouseholdUpdate,
 ):
     """Update household details. Only the owner can update."""
-    user = kutils.current_user(request)
 
-    household = await HOUSEHOLD.aget_entity(household_id)
-
-    # Check if user is the owner
-    if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
-        raise AuthorizationError(detail="Only the household owner can update details")
+    await verify_access(request, household_id)
 
     # Update household
     spec = household_data.model_dump(exclude_unset=True)
@@ -141,17 +162,9 @@ async def api_delete_household(
     household_id: str,
 ):
     """Delete a household. Only the owner can delete."""
-    user = kutils.current_user(request)
 
-    household = await HOUSEHOLD.aget_entity(household_id)
+    await verify_access(request, household_id)
 
-    # Check if user is the owner
-    if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
-        raise AuthorizationError(
-            detail="Only the household owner can delete the household"
-        )
-
-    # Delete household
     await HOUSEHOLD.delete(household_id)
 
     return {"message": "Household deleted successfully"}
@@ -174,29 +187,3 @@ async def api_list_households(
 
     households = await HOUSEHOLD.fetch(limit=limit, offset=offset, owner_id=user["sub"])
     return [HouseholdResponse(**h) for h in households]
-
-
-# ========== Household Member Endpoints ==========
-
-
-@router.get(
-    "/{household_id}/members",
-    dependencies=[Depends(auth())],
-    summary="List household members",
-    description="List all members of a household. User must be the owner or admin.",
-)
-@render()
-async def api_list_household_members(
-    request: Request,
-    household_id: str,
-):
-    """List all members of a household. User must be the owner or admin."""
-    id = kutils.current_user(request).get("sub")
-
-    # Check if user is the owner
-    household = await HOUSEHOLD.aget_entity(household_id)
-    if household["owner_id"] != id and not kutils.is_admin(request):
-        raise AuthorizationError(detail="You are not the owner of this household")
-
-    members = await HOUSEHOLD_MEMBER.fetch(household_id=household_id)
-    return [HouseholdMemberResponse(**m) for m in members]

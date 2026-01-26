@@ -3,7 +3,7 @@ from routers.generic import render
 from typing import Optional
 import logging
 from auth import auth
-from schemas import ChatRequest, SummarizeRequest
+from schemas import ArticleInput, ChatRequest, SummarizeRequest
 import kutils
 from backend.foodscholar import FOODSCHOLAR
 
@@ -56,4 +56,14 @@ async def search_summarize(request: Request, body: SummarizeRequest):
         language=body.language,
         user_id=body.user_id,
         expertise_level=body.expertise_level
+    )
+
+@router.post("/enrich/article", dependencies=[Depends(auth())])
+@render()
+async def enrich_article(request: Request, body: ArticleInput):
+    return await FOODSCHOLAR.enrich_article(
+        urn=body.urn,
+        title=body.title,
+        abstract=body.abstract,
+        authors=body.authors
     )

@@ -18,35 +18,13 @@ from schemas import (
     HouseholdMemberProfileResponse,
 )
 from api.v1.household_members import HOUSEHOLD_MEMBER
-from api.v1.households import HOUSEHOLD
+from routers.households import verify_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/members", tags=["Household Members Management Operations"]
 )
-
-
-# ========== Helper Functions ==========
-
-
-async def verify_member_access(request: Request, member_id: str) -> Dict[str, Any]:
-    """
-    Verify that the user has access to the member.
-    Returns the member if access is granted, raises AuthorizationError otherwise.
-    """
-    user = kutils.current_user(request)
-    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
-
-    # Get the household to check ownership
-    household = await HOUSEHOLD.aget_entity(member["household_id"])
-
-    # Check if user is the owner or admin
-    if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
-        raise AuthorizationError(detail="You do not have access to this member")
-
-    return member
-
 
 # ========== Household Member Endpoints ==========
 
@@ -66,12 +44,10 @@ async def api_create_member(
     Create a new household member.
     User must be the owner of the household or an admin.
     """
-    user = kutils.current_user(request)
+    # Verify access to household
+    await verify_access(request, member_data.household_id)
 
-    # Verify user owns the household
-    household = await HOUSEHOLD.aget_entity(member_data.household_id)
-    if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
-        raise AuthorizationError(detail="Only the household owner can add members")
+    user = kutils.current_user(request)
 
     # Create member
     spec = member_data.model_dump()
@@ -92,7 +68,8 @@ async def api_get_member(
     member_id: str,
 ):
     """Get household member details by ID. User must have access to the household."""
-    member = await verify_member_access(request, member_id)
+    member = await verify_access(request, None, member_id)
+
     return HouseholdMemberResponse(**member)
 
 
@@ -110,14 +87,14 @@ async def api_list_members(
     offset: int = 0,
 ):
     """List all members of a household. User must have access to the household."""
+
+    await verify_access(request, household_id)
+
     user = kutils.current_user(request)
 
-    # Verify user owns the household
-    household = await HOUSEHOLD.aget_entity(household_id)
-    if household["owner_id"] != user["sub"] and not kutils.is_admin(request):
-        raise AuthorizationError(detail="You do not have access to this household")
-
-    members = await HOUSEHOLD_MEMBER.fetch(limit=limit, offset=offset, household_id=household_id)
+    members = await HOUSEHOLD_MEMBER.fetch(
+        limit=limit, offset=offset, household_id=household_id
+    )
     return [HouseholdMemberResponse(**m) for m in members]
 
 
@@ -134,7 +111,7 @@ async def api_patch_member(
     member_data: HouseholdMemberUpdate,
 ):
     """Update household member details. User must have access to the household."""
-    await verify_member_access(request, member_id)
+    await verify_access(request, None, member_id)
 
     # Update member
     spec = member_data.model_dump(exclude_unset=True)
@@ -155,7 +132,7 @@ async def api_delete_member(
     member_id: str,
 ):
     """Delete a household member. User must have access to the household."""
-    await verify_member_access(request, member_id)
+    await verify_access(request, None, member_id)
 
     # Delete member
     await HOUSEHOLD_MEMBER.delete(member_id)
@@ -179,13 +156,14 @@ async def api_create_member_profile(
     profile_data: HouseholdMemberProfileCreate,
 ):
     """Create a household member's profile. User must have access."""
-    await verify_member_access(request, member_id)
+    await verify_access(request, None, member_id)
 
     # Create profile
     spec = profile_data.model_dump()
     profile = await HOUSEHOLD_MEMBER.create_member_profile(member_id, spec)
 
     return HouseholdMemberProfileResponse(**profile)
+
 
 @router.patch(
     "/{member_id}/profile",
@@ -200,7 +178,7 @@ async def api_patch_member_profile(
     profile_data: HouseholdMemberProfileUpdate,
 ):
     """Create or update a household member's profile. User must have access."""
-    await verify_member_access(request, member_id)
+    await verify_access(request, None, member_id)
 
     # Create/update profile
     spec = profile_data.model_dump()
@@ -221,7 +199,7 @@ async def api_get_member_profile(
     member_id: str,
 ):
     """Get a household member's profile. User must have access."""
-    await verify_member_access(request, member_id)
+    await verify_access(request, None, member_id)
 
     # Get profile
     profile = await HOUSEHOLD_MEMBER.get_member_profile(member_id)
@@ -243,7 +221,7 @@ async def api_delete_member_profile(
     member_id: str,
 ):
     """Delete a household member's profile. User must have access."""
-    await verify_member_access(request, member_id)
+    await verify_access(request, None, member_id)
 
     # Delete profile
     await HOUSEHOLD_MEMBER.delete_member_profile(member_id)

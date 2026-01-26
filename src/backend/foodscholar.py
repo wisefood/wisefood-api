@@ -142,6 +142,16 @@ class FoodScholar:
             "results": results,
             "query": query
         }
-        return await FOODSCHOLAR.post("/search/summarize", json=spec)
+        return await FOODSCHOLAR.post("/api/v1/search/summarize", json=spec)
+
+    @classmethod
+    async def enrich_article(cls, urn: str, title: str, abstract: str, authors: Optional[str] = None):
+        spec = {
+            "urn": urn,
+            "title": title,
+            "abstract": abstract,
+            "authors": authors,
+        }
+        return await FOODSCHOLAR.post("/api/v1/enrich/article", json=spec)
 
 FOODSCHOLAR = FoodScholar.get_client()
