@@ -253,8 +253,7 @@ class HouseholdMemberEntity(Entity):
         :param query: Search query (supports household_id filter)
         :return: List of matching members
         """
-        household_id = query.get("household_id")
-        return await self.fetch(household_id=household_id)
+        raise NotImplementedError("Search not implemented for HouseholdMemberEntity")
 
     # ========== Household Member Profile Operations ==========
 

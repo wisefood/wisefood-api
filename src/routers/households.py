@@ -82,7 +82,7 @@ async def api_create_household(
 
     # Create household using entity
     household = await HOUSEHOLD.acreate_entity(
-        household_data.model_dump(), kutils.current_user(request)
+        household_data.model_dump(exclude_unset=True), kutils.current_user(request)
     )
 
     return HouseholdDetailResponse(**household)

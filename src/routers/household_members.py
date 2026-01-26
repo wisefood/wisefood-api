@@ -159,7 +159,7 @@ async def api_create_member_profile(
     await verify_access(request, None, member_id)
 
     # Create profile
-    spec = profile_data.model_dump()
+    spec = profile_data.model_dump(exclude_unset=True)
     profile = await HOUSEHOLD_MEMBER.create_member_profile(member_id, spec)
 
     return HouseholdMemberProfileResponse(**profile)
@@ -181,7 +181,7 @@ async def api_patch_member_profile(
     await verify_access(request, None, member_id)
 
     # Create/update profile
-    spec = profile_data.model_dump()
+    spec = profile_data.model_dump(exclude_unset=True)
     profile = await HOUSEHOLD_MEMBER.update_member_profile(member_id, spec)
 
     return HouseholdMemberProfileResponse(**profile)
