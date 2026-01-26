@@ -26,6 +26,9 @@ class LoginSchema(BaseModel):
     username: str = Field(..., description="Username or email")
     password: str = Field(..., description="Password")
 
+class MTMSchema(BaseModel):
+    client_id: str = Field(..., description="Client ID")
+    client_secret: str = Field(..., description="Client Secret")
 
 # ---------- Enums ----------
 class AgeGroupEnum(str, Enum):
@@ -196,4 +199,13 @@ class SummarizeRequest(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID for context")
     language: Optional[str] = Field("en", description="Language code for the summary")
     expertise_level: Optional[str] = Field("general", description="Expertise level of the user")
-    
+
+class ArticleInput(BaseModel):
+    """Input model for article enrichment."""
+
+    urn: str = Field(description="Article URN (unique identifier)")
+    title: str = Field(description="Article title")
+    abstract: str = Field(description="Article abstract text")
+    authors: Optional[str] = Field(
+        default=None, description="Comma-separated list of authors"
+    )

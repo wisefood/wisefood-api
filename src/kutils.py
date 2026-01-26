@@ -148,6 +148,7 @@ def introspect_admin_token(access_token):
 
     return True
 
+
 def current_token(request: Request) -> Optional[str]:
     """
     Extracts the current access token from the Authorization header.
@@ -179,6 +180,7 @@ def current_user(request: Request) -> Optional[Dict]:
         return get_user_by_token(token)
     return None
 
+
 def is_admin(request: Request) -> bool:
     """
     Checks if the current user is an admin based on the access token in the request headers.
@@ -197,6 +199,7 @@ def is_admin(request: Request) -> bool:
             return False
     return False
 
+
 def get_token(username, password):
     """
     Returns a token for a user in Keycloak by using username and password.
@@ -212,6 +215,22 @@ def get_token(username, password):
         AuthenticationError: If the token could not be retrieved.
     """
     return KEYCLOAK_OPENID_CLIENT().token(username, password)
+
+
+def get_client_token(client_id, client_secret):
+    """
+    Returns a token for the client in Keycloak using client credentials.
+
+    Returns:
+        dict: The token dictionary containing the access_token and additional details.
+
+    Raises:
+        AuthenticationError: If the token could not be retrieved.
+    """
+    return KEYCLOAK_OPENID_CLIENT().token(
+        grant_type="client_credentials", username=client_id, passwords=client_secret
+    )
+
 
 def get_user_by_token(access_token):
     """
