@@ -68,7 +68,7 @@ async def api_get_member(
     member_id: str,
 ):
     """Get household member details by ID. User must have access to the household."""
-    member = await verify_access(request, None, member_id)
+    member, _ = await verify_access(request, None, member_id)
 
     return HouseholdMemberResponse(**member)
 
