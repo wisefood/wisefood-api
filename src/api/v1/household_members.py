@@ -292,6 +292,8 @@ class HouseholdMemberEntity(Entity):
                     ]
                 else:
                     existing_profile.dietary_groups = []
+            if "allergies" in profile_data:
+                existing_profile.allergies = profile_data.get("allergies") or []
             existing_profile.updated_at = datetime.now(timezone.utc)
             await db.flush()
             return existing_profile.to_dict()
@@ -310,6 +312,7 @@ class HouseholdMemberEntity(Entity):
             household_member_id=member_id,
             nutritional_preferences=profile_data.get("nutritional_preferences", {}),
             dietary_groups=dietary_groups,
+            allergies=profile_data.get("allergies", []),
         )
         db.add(profile)
         await db.flush()
@@ -396,10 +399,11 @@ class HouseholdMemberEntity(Entity):
                     ]
                 else:
                     profile.dietary_groups = []
-
+            if "allergies" in profile_data:
+                profile.allergies = profile_data.get("allergies") or []
             if "properties" in profile_data:
                 profile.properties = profile_data["properties"]
-            
+
             profile.updated_at = datetime.now(timezone.utc)
             await db.flush()
             await db.commit()

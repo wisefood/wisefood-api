@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS wisefood.household_member_profile (
     household_member_id VARCHAR(100) NOT NULL REFERENCES wisefood.household_member(id) ON DELETE CASCADE ON UPDATE CASCADE,
     nutritional_preferences JSONB DEFAULT '{}',
     dietary_groups dietary_groups[] DEFAULT '{}',
+    allergies TEXT[] DEFAULT '{}',
     properties JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

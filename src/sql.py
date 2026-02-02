@@ -197,6 +197,7 @@ class HouseholdMemberProfile(Base):
     )
     nutritional_preferences = mapped_column(JSONB, nullable=True, default=dict)
     dietary_groups = mapped_column(ARRAY(Enum(DietaryGroup, name="dietary_groups", create_type=False)), nullable=True, default=list)
+    allergies = mapped_column(ARRAY(String), nullable=True, default=list)
     properties = mapped_column(JSONB, nullable=True, default=dict)
     created_at = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
@@ -209,8 +210,9 @@ class HouseholdMemberProfile(Base):
             "id": self.id,
             "household_member_id": self.household_member_id,
             "nutritional_preferences": self.nutritional_preferences or {},
-            "properties": self.properties or {},
             "dietary_groups": [dg.value for dg in (self.dietary_groups or [])],
+            "allergies": self.allergies or [],
+            "properties": self.properties or {},
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }

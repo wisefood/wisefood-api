@@ -87,6 +87,7 @@ class DietaryGroupEnum(str, Enum):
 class HouseholdMemberProfileBase(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
     dietary_groups: Optional[List[DietaryGroupEnum]] = Field(default_factory=list)
+    allergies: Optional[List[str]] = Field(default_factory=list)
     properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -97,6 +98,7 @@ class HouseholdMemberProfileCreate(HouseholdMemberProfileBase):
 class HouseholdMemberProfileUpdate(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = None
     dietary_groups: Optional[List[DietaryGroupEnum]] = None
+    allergies: Optional[List[str]] = None
     properties: Optional[Dict[str, Any]] = None
 
 
