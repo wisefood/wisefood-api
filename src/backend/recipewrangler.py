@@ -17,7 +17,7 @@ class RecipeWrangler:
     def get_client(
         cls,
         base_url: str = config.settings["RECIPEWRANGLER_URL"],
-        timeout: float = 15.0,
+        timeout: float = 60.0,
         max_connections: int = 15,
         max_keepalive_connections: int = 7,
         verify: bool = True,

@@ -22,7 +22,7 @@ async def status(request: Request):
     return await RECIPEWRANGLER.status()
 
 
-@router.get("/recipes/{recipe_id}", dependencies=[Depends(auth())], response_model=RecipeDetailResponse)
+@router.get("/recipes/{recipe_id}", dependencies=[Depends(auth())])
 @render()
 async def get_recipe(recipe_id: str, request: Request):
     """Retrieve a recipe with full metadata by id."""
@@ -39,7 +39,7 @@ async def search_recipes(payload: RecipeSearchRequest, request: Request):
     )
 
 
-@router.post("/recipes/profile", dependencies=[Depends(auth())], response_model=RecipeProfileResponse)
+@router.post("/recipes/profile", dependencies=[Depends(auth())])
 @render()
 async def profile_recipe(payload: RecipeProfileRequest, request: Request):
     """Run parsing + profiling pipeline on raw recipe text."""
