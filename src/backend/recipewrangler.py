@@ -89,4 +89,24 @@ class RecipeWrangler:
     async def status(cls):
         return await cls.get("/health")
 
+    @classmethod
+    async def get_recipe(cls, recipe_id: str):
+        """Retrieve a recipe with full metadata by id."""
+        return await cls.get(f"/api/v1/recipes/{recipe_id}")
+
+    @classmethod
+    async def search_recipes(cls, question: str, exclude_allergens: list[str] = None):
+        """Search recipes via the knowledge graph."""
+        payload = {
+            "question": question,
+            "exclude_allergens": exclude_allergens or []
+        }
+        return await cls.post("/api/v1/recipes/search", json=payload)
+
+    @classmethod
+    async def profile_recipe(cls, raw_recipe: str):
+        """Run parsing + profiling pipeline on raw recipe text."""
+        payload = {"raw_recipe": raw_recipe}
+        return await cls.post("/api/v1/recipes/profile", json=payload)
+
 RECIPEWRANGLER = RecipeWrangler.get_client()

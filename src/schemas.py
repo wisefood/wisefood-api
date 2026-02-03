@@ -211,3 +211,94 @@ class ArticleInput(BaseModel):
     authors: Optional[str] = Field(
         default=None, description="Comma-separated list of authors"
     )
+
+
+# ---------- RecipeWrangler Schemas ----------
+
+class IngredientProfile(BaseModel):
+    """Ingredient nutritional and sustainability profile"""
+    name: Optional[str] = None
+    measurement: Optional[str] = None
+    weight_g: float = 0
+    source: Optional[str] = None
+    matched_nutritional_ingredient: Optional[str] = None
+    protein_per_100g: Optional[float] = None
+    carbs_per_100g: Optional[float] = None
+    fat_per_100g: Optional[float] = None
+    protein_g: Optional[float] = None
+    carbs_g: Optional[float] = None
+    fat_g: Optional[float] = None
+    distance: Optional[float] = None
+    sustainability_ingredient: Optional[str] = None
+    matched_sustainability_ingredient: Optional[str] = None
+    sustainability_weight_g: Optional[float] = None
+    cf_val: Optional[float] = Field(None, description="Carbon footprint value")
+    sustainability_distance: Optional[float] = None
+    contribution: Optional[float] = None
+
+
+class RecipeProfileRequest(BaseModel):
+    """Request payload for recipe profiling endpoint"""
+    raw_recipe: str = Field(..., min_length=1, description="Unstructured recipe text to analyze")
+
+
+class RecipeProfileResponse(BaseModel):
+    """Response payload from recipe profiling endpoint"""
+    raw_recipe: Optional[str] = None
+    title: Optional[str] = None
+    ingredient_names: List[str] = Field(default_factory=list)
+    measurements: List[str] = Field(default_factory=list)
+    weights: Optional[Any] = None
+    ingredients: List[IngredientProfile] = Field(default_factory=list)
+    debug: bool = False
+    directions: List[str] = Field(default_factory=list)
+    total_time: Optional[float] = None
+    tags: List[str] = Field(default_factory=list)
+    allergens: List[str] = Field(default_factory=list)
+    sustainability_per_kg: Optional[float] = None
+    total_protein_g: Optional[float] = None
+    total_fat_g: Optional[float] = None
+    total_carbohydrate_g: Optional[float] = None
+    total_energy_kcal: Optional[float] = None
+    profiling_totals: Dict[str, float] = Field(default_factory=dict)
+    full_profile: Dict[str, Any] = Field(default_factory=dict)
+    serves: Optional[float] = None
+    serving_size_g: Optional[float] = None
+    min_similarity: Optional[float] = None
+    similar_recipes: List[Dict[str, Any]] = Field(default_factory=list)
+    agent_decision: Optional[str] = None
+    query: Optional[str] = None
+    cypher: Optional[str] = None
+    tag_list: List[str] = Field(default_factory=list)
+    message: str = "Success"
+
+    model_config = ConfigDict(extra='allow')
+
+
+class RecipeSearchRequest(BaseModel):
+    """Request payload for recipe search endpoint"""
+    question: str = Field(..., min_length=1, description="Natural language recipe question")
+    exclude_allergens: List[str] = Field(
+        default_factory=list,
+        description="Allergen names to exclude (e.g., ['peanut', 'tree_nut'])"
+    )
+
+
+class RecipeDetailResponse(BaseModel):
+    """Detailed recipe representation fetched from Neo4j"""
+    recipe_id: str
+    title: str
+    image_url: Optional[str] = None
+    ingredients: List[Dict[str, Any]]
+    instructions: List[str]
+    duration: Optional[float] = None
+    serves: Optional[float] = None
+    total_kcal_per_serving: Optional[float] = None
+    total_protein_g_per_serving: Optional[float] = None
+    total_carbs_g_per_serving: Optional[float] = None
+    total_fat_g_per_serving: Optional[float] = None
+    total_fiber_g_per_serving: Optional[float] = None
+    total_sugar_g_per_serving: Optional[float] = None
+    total_sodium_mg_per_serving: Optional[float] = None
+    total_cholesterol_mg_per_serving: Optional[float] = None
+    nutri_score: Optional[float] = None
