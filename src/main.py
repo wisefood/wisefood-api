@@ -33,7 +33,7 @@ class Config:
         self.settings["ES_DIM"] = int(os.getenv("ES_DIM", 384))
         self.settings["FOODSCHOLAR_URL"] = os.getenv("FOODSCHOLAR_URL", "http://foodscholar:8001")
         self.settings["RECIPEWRANGLER_URL"] = os.getenv("RECIPEWRANGLER_URL", "http://recipewrangler:8001")
-        self.settings["FOODCHAT_URL"] = os.getenv("FOODCHAT_URL", "http://foodchat:8001")
+        self.settings["FOODCHAT_URL"] = os.getenv("FOODCHAT_URL", "http://foodchat:8000")
         self.settings["MINIO_ENDPOINT"] = os.getenv(
             "MINIO_ENDPOINT", "http://minio:9000"
         )
@@ -133,12 +133,14 @@ from routers.household_members import router as household_members_router
 from routers.core import router as core_router
 from routers.foodscholar import router as foodscholar_router
 from routers.recipewrangler import router as recipewrangler_router
+from routers.foodchat import router as foodchat_router
 
 api.include_router(households_router)
 api.include_router(household_members_router)
 api.include_router(core_router)
 api.include_router(foodscholar_router)
 api.include_router(recipewrangler_router)
+api.include_router(foodchat_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration

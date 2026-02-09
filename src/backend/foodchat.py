@@ -89,4 +89,46 @@ class FoodChat:
     async def status(cls):
         return await cls.get("/health")
 
+    @classmethod
+    async def create_session(cls, member_id: str):
+        """Create a new chat session for a household member."""
+        return await cls.post("/foodchat/sessions", json={"member_id": member_id})
+
+    @classmethod
+    async def get_session(cls, session_id: str):
+        """Get session state and metadata."""
+        return await cls.get(f"/foodchat/sessions/{session_id}")
+
+    @classmethod
+    async def delete_session(cls, session_id: str):
+        """Delete a session."""
+        return await cls.delete(f"/foodchat/sessions/{session_id}")
+
+    @classmethod
+    async def send_message(cls, session_id: str, content: str):
+        """Send a message and get a response. Uses 60s timeout for meal plan generation."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/messages",
+            json={"content": content},
+            timeout=60.0
+        )
+
+    @classmethod
+    async def get_messages(cls, session_id: str, limit: Optional[int] = None):
+        """Get message history for a session."""
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        return await cls.get(f"/foodchat/sessions/{session_id}/messages", params=params or None)
+
+    @classmethod
+    async def get_meal_plans(cls, session_id: str):
+        """Get all meal plans generated in a session."""
+        return await cls.get(f"/foodchat/sessions/{session_id}/meal-plans")
+
+    @classmethod
+    async def get_member_sessions(cls, member_id: str):
+        """Get all sessions for a specific member."""
+        return await cls.get(f"/foodchat/members/{member_id}/sessions")
+
 FOODCHAT = FoodChat.get_client()

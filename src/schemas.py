@@ -302,3 +302,15 @@ class RecipeDetailResponse(BaseModel):
     total_sodium_mg_per_serving: Optional[float] = None
     total_cholesterol_mg_per_serving: Optional[float] = None
     nutri_score: Optional[float] = None
+
+
+# ---------- FoodChat Schemas ----------
+
+class FoodChatCreateSessionRequest(BaseModel):
+    """Request payload for creating a FoodChat session."""
+    member_id: str = Field(..., description="Household member ID to create session for")
+
+
+class FoodChatMessageRequest(BaseModel):
+    """Request payload for sending a message in a FoodChat session."""
+    content: str = Field(..., min_length=1, description="Message content to send")

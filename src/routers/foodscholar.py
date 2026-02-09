@@ -6,10 +6,33 @@ from auth import auth
 from schemas import ArticleInput, ChatRequest, SummarizeRequest
 import kutils
 from backend.foodscholar import FOODSCHOLAR
+from api.v1.households import HOUSEHOLD
+from api.v1.household_members import HOUSEHOLD_MEMBER
+from exceptions import AuthorizationError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/foodscholar", tags=["Food Scholar Operations"])
+
+
+async def verify_member_access(request: Request, member_id: str):
+    """
+    Verify that the current user has access to the given member.
+    The member must belong to a household owned by the current user,
+    or the user must be an admin/agent.
+    """
+    user = kutils.current_user(request)
+    member = await HOUSEHOLD_MEMBER.aget_entity(member_id)
+    household = await HOUSEHOLD.aget_entity(member["household_id"])
+
+    if (
+        household["owner_id"] != user["sub"]
+        and not kutils.is_admin(request)
+        and not kutils.is_agent(request)
+    ):
+        raise AuthorizationError(detail="You do not have access to this member")
+
+    return member, household
 
 
 @router.get("/status", dependencies=[Depends(auth())])
@@ -36,6 +59,8 @@ async def session_history(request: Request, session_id: str):
 @render()
 async def create_session(request: Request, member_id: Optional[str] = None):
     user = kutils.current_user(request)
+    if member_id:
+        await verify_member_access(request, member_id)
     return await FOODSCHOLAR.create_session(user, member_id)
 
 
