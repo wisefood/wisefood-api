@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 # ------- System Schemas -------
@@ -230,6 +230,17 @@ class QAPreferredAnswerEnum(str, Enum):
     both = "both"
 
 
+class QAHelpfulnessEnum(str, Enum):
+    helpful = "helpful"
+    not_helpful = "not_helpful"
+
+
+class QATargetAnswerEnum(str, Enum):
+    primary = "primary"
+    secondary = "secondary"
+    overall = "overall"
+
+
 class Reference(BaseModel):
     source_type: str = Field(..., description="Type of source")
     description: str = Field(..., description="Brief source description")
@@ -293,12 +304,35 @@ class QARequest(BaseModel):
 
 class QAFeedbackRequest(BaseModel):
     request_id: str = Field(..., description="QA request identifier")
-    preferred_answer: QAPreferredAnswerEnum = Field(
-        ..., description="Preferred answer in dual-answer mode"
+    preferred_answer: Optional[QAPreferredAnswerEnum] = Field(
+        default=None,
+        description=(
+            "Dual-answer preference (A/B feedback only). Use when both primary "
+            "and secondary answers are shown."
+        ),
+    )
+    helpfulness: Optional[QAHelpfulnessEnum] = Field(
+        default=None,
+        description=(
+            "General helpfulness feedback. Use for single-answer or overall "
+            "quality feedback."
+        ),
+    )
+    target_answer: QATargetAnswerEnum = Field(
+        default=QATargetAnswerEnum.overall,
+        description="Which answer the feedback targets.",
     )
     reason: Optional[str] = Field(
-        default=None, max_length=500, description="Optional reason for preference"
+        default=None, max_length=500, description="Optional reason for feedback"
     )
+
+    @model_validator(mode="after")
+    def _validate_feedback_shape(self):
+        if self.preferred_answer is None and self.helpfulness is None:
+            raise ValueError(
+                "At least one of 'preferred_answer' or 'helpfulness' must be provided."
+            )
+        return self
 
 
 class QAFeedbackResponse(BaseModel):
