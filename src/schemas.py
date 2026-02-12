@@ -212,6 +212,121 @@ class ArticleInput(BaseModel):
         default=None, description="Comma-separated list of authors"
     )
 
+class QAModeEnum(str, Enum):
+    simple = "simple"
+    advanced = "advanced"
+
+
+class QAExpertiseLevelEnum(str, Enum):
+    beginner = "beginner"
+    intermediate = "intermediate"
+    expert = "expert"
+
+
+class QAPreferredAnswerEnum(str, Enum):
+    a = "a"
+    b = "b"
+    neither = "neither"
+    both = "both"
+
+
+class Reference(BaseModel):
+    source_type: str = Field(..., description="Type of source")
+    description: str = Field(..., description="Brief source description")
+
+
+class RetrievedArticle(BaseModel):
+    urn: str = Field(..., description="Article URN")
+    title: str = Field(..., description="Article title")
+    authors: Optional[List[str]] = Field(default=None, description="Article authors")
+    venue: Optional[str] = Field(default=None, description="Publication venue")
+    publication_year: Optional[str] = Field(default=None, description="Publication year")
+    category: Optional[str] = Field(default=None, description="Article category")
+    tags: Optional[List[str]] = Field(default=None, description="Article tags")
+    similarity_score: float = Field(..., description="Cosine similarity score (0-1)")
+
+
+class QAAnswer(BaseModel):
+    """
+    Flexible answer schema. Upstream may include additional fields depending on mode.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    answer: Optional[str] = Field(default=None, description="Generated answer text")
+    references: Optional[List[Reference]] = Field(
+        default=None, description="References used in the answer"
+    )
+
+
+class DualAnswerFeedback(BaseModel):
+    request_id: str = Field(..., description="Unique request identifier for tracking")
+    answer_a_label: str = Field(..., description="Label describing approach A")
+    answer_b_label: str = Field(..., description="Label describing approach B")
+
+
+class QARequest(BaseModel):
+    question: str = Field(
+        ..., min_length=3, max_length=1000, description="Food science question"
+    )
+    mode: QAModeEnum = Field(
+        default=QAModeEnum.simple,
+        description="simple = default pipeline, advanced = custom model/RAG settings",
+    )
+    model: Optional[str] = Field(default=None, description="Model (advanced mode only)")
+    rag_enabled: bool = Field(
+        default=True, description="Enable retrieval in advanced mode"
+    )
+    top_k: int = Field(default=5, ge=1, le=20, description="Retrieved article count")
+    expertise_level: QAExpertiseLevelEnum = Field(
+        default=QAExpertiseLevelEnum.intermediate,
+        description="Answer complexity level",
+    )
+    language: str = Field(default="en", description="ISO 639-1 language code")
+    user_id: Optional[str] = Field(
+        default=None, description="Set by API for tracking"
+    )
+    member_id: Optional[str] = Field(
+        default=None, description="Optional member identifier for tracking"
+    )
+
+
+class QAFeedbackRequest(BaseModel):
+    request_id: str = Field(..., description="QA request identifier")
+    preferred_answer: QAPreferredAnswerEnum = Field(
+        ..., description="Preferred answer in dual-answer mode"
+    )
+    reason: Optional[str] = Field(
+        default=None, max_length=500, description="Optional reason for preference"
+    )
+
+
+class QAFeedbackResponse(BaseModel):
+    request_id: str = Field(..., description="Request identifier")
+    status: str = Field(..., description="Feedback status")
+    message: str = Field(..., description="Confirmation message")
+
+
+class QAResponse(BaseModel):
+    question: str = Field(..., description="Original question")
+    mode: QAModeEnum = Field(..., description="Mode used")
+    primary_answer: QAAnswer = Field(..., description="Primary answer")
+    secondary_answer: Optional[QAAnswer] = Field(
+        default=None, description="Secondary answer for A/B comparison"
+    )
+    dual_answer_feedback: Optional[DualAnswerFeedback] = Field(
+        default=None, description="Feedback metadata for dual-answer mode"
+    )
+    retrieved_articles: List[RetrievedArticle] = Field(
+        default_factory=list, description="Articles retrieved by semantic search"
+    )
+    follow_up_suggestions: Optional[List[str]] = Field(
+        default=None, description="Suggested follow-up questions"
+    )
+    generated_at: str = Field(..., description="ISO response generation timestamp")
+    cache_hit: bool = Field(default=False, description="Whether result came from cache")
+    request_id: str = Field(..., description="Unique request identifier")
+
 
 # ---------- RecipeWrangler Schemas ----------
 

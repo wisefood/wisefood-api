@@ -3,7 +3,13 @@ from routers.generic import render
 from typing import Optional
 import logging
 from auth import auth
-from schemas import ArticleInput, ChatRequest, SummarizeRequest
+from schemas import (
+    ArticleInput,
+    ChatRequest,
+    QAFeedbackRequest,
+    QARequest,
+    SummarizeRequest,
+)
 import kutils
 from backend.foodscholar import FOODSCHOLAR
 from api.v1.households import HOUSEHOLD
@@ -92,3 +98,27 @@ async def enrich_article(request: Request, body: ArticleInput):
         abstract=body.abstract,
         authors=body.authors
     )
+
+
+@router.post("/qa/ask", dependencies=[Depends(auth())])
+@render()
+async def ask_question(request: Request, body: QARequest):
+    user = kutils.current_user(request)
+    payload = body.model_copy(update={"user_id": user["sub"]})
+
+    if payload.member_id:
+        await verify_member_access(request, payload.member_id)
+
+    return await FOODSCHOLAR.ask_question(payload.model_dump(exclude_none=True))
+
+
+@router.post("/qa/feedback", dependencies=[Depends(auth())])
+@render()
+async def submit_feedback(request: Request, body: QAFeedbackRequest):
+    return await FOODSCHOLAR.submit_qa_feedback(body.model_dump(exclude_none=True))
+
+
+@router.get("/qa/models", dependencies=[Depends(auth())])
+@render()
+async def list_qa_models(request: Request):
+    return await FOODSCHOLAR.list_qa_models()

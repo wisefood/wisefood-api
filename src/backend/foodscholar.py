@@ -154,4 +154,16 @@ class FoodScholar:
         }
         return await FOODSCHOLAR.post("/api/v1/enrich/article", json=spec)
 
+    @classmethod
+    async def ask_question(cls, payload: dict):
+        return await FOODSCHOLAR.post("/api/v1/qa/ask", json=payload)
+
+    @classmethod
+    async def submit_qa_feedback(cls, payload: dict):
+        return await FOODSCHOLAR.post("/api/v1/qa/feedback", json=payload)
+
+    @classmethod
+    async def list_qa_models(cls):
+        return await FOODSCHOLAR.get("/api/v1/qa/models")
+
 FOODSCHOLAR = FoodScholar.get_client()
