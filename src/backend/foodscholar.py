@@ -166,4 +166,13 @@ class FoodScholar:
     async def list_qa_models(cls):
         return await FOODSCHOLAR.get("/api/v1/qa/models")
 
+    @classmethod
+    async def get_suggested_questions(cls):
+        return await FOODSCHOLAR.get("/api/v1/qa/questions")
+
+    @classmethod
+    async def get_tips(cls):
+        return await FOODSCHOLAR.get("/api/v1/qa/tips")
+
+
 FOODSCHOLAR = FoodScholar.get_client()

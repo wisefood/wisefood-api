@@ -122,3 +122,15 @@ async def submit_feedback(request: Request, body: QAFeedbackRequest):
 @render()
 async def list_qa_models(request: Request):
     return await FOODSCHOLAR.list_qa_models()
+
+
+@router.get("/qa/questions", dependencies=[Depends(auth())])
+@render()
+async def list_qa_questions(request: Request):
+    return await FOODSCHOLAR.get_suggested_questions()
+
+
+@router.get("/qa/tips", dependencies=[Depends(auth())])
+@render()
+async def list_qa_tips(request: Request):
+    return await FOODSCHOLAR.get_tips()
