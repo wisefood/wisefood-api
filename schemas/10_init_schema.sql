@@ -64,3 +64,33 @@ CREATE TABLE IF NOT EXISTS wisefood.household_member_profile (
     FOREIGN KEY (household_member_id) REFERENCES wisefood.household_member(id) ON DELETE CASCADE ON UPDATE CASCADE,
     UNIQUE(household_member_id)
 );
+
+CREATE TABLE IF NOT EXISTS wisefood.meal_plan (
+    id VARCHAR(64) PRIMARY KEY,
+    household_id VARCHAR(100) NOT NULL,
+    applied_on DATE NOT NULL,
+    source_meal_plan_id VARCHAR(100),
+    source_created_at TIMESTAMPTZ,
+    breakfast JSONB NOT NULL DEFAULT '{}',
+    lunch JSONB NOT NULL DEFAULT '{}',
+    dinner JSONB NOT NULL DEFAULT '{}',
+    reasoning TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (household_id) REFERENCES wisefood.household(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS ix_meal_plan_household_id ON wisefood.meal_plan(household_id);
+CREATE INDEX IF NOT EXISTS ix_meal_plan_applied_on ON wisefood.meal_plan(applied_on);
+
+CREATE TABLE IF NOT EXISTS wisefood.meal_plan_member (
+    id VARCHAR(64) PRIMARY KEY,
+    meal_plan_id VARCHAR(64) NOT NULL,
+    member_id VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (meal_plan_id) REFERENCES wisefood.meal_plan(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (member_id) REFERENCES wisefood.household_member(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    UNIQUE(meal_plan_id, member_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_meal_plan_member_member_id ON wisefood.meal_plan_member(member_id);
+CREATE INDEX IF NOT EXISTS ix_meal_plan_member_meal_plan_id ON wisefood.meal_plan_member(meal_plan_id);

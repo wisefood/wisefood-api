@@ -11,11 +11,13 @@ import enum
 from sqlalchemy import (
     Column,
     String,
+    Date,
     DateTime,
     ForeignKey,
     Table,
     Text,
     Index,
+    UniqueConstraint,
     select,
     delete,
     Enum,
@@ -110,6 +112,9 @@ class Household(Base):
     members: Mapped[List["HouseholdMember"]] = relationship(
         "HouseholdMember", back_populates="household", cascade="all, delete-orphan"
     )
+    meal_plans: Mapped[List["MealPlan"]] = relationship(
+        "MealPlan", back_populates="household", cascade="all, delete-orphan"
+    )
 
     def to_dict(self, include_members: bool = False) -> dict:
         result = {
@@ -161,6 +166,9 @@ class HouseholdMember(Base):
     household: Mapped["Household"] = relationship("Household", back_populates="members")
     profile: Mapped[Optional["HouseholdMemberProfile"]] = relationship(
         "HouseholdMemberProfile", back_populates="member", cascade="all, delete-orphan", uselist=False
+    )
+    meal_plan_assignments: Mapped[List["MealPlanMember"]] = relationship(
+        "MealPlanMember", back_populates="member", cascade="all, delete-orphan"
     )
 
     def to_dict(self, include_profile: bool = False) -> dict:
@@ -216,3 +224,107 @@ class HouseholdMemberProfile(Base):
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+
+class MealPlan(Base):
+    """
+    Household meal plan for a specific date.
+
+    One meal plan can be assigned to one or more household members.
+    """
+
+    __tablename__ = "meal_plan"
+    __table_args__ = (
+        Index("ix_meal_plan_household_id", "household_id"),
+        Index("ix_meal_plan_applied_on", "applied_on"),
+        {"schema": "wisefood"},
+    )
+
+    id = mapped_column(String(64), primary_key=True, default=lambda: str(uuid4()))
+    household_id = mapped_column(
+        String(100),
+        ForeignKey("wisefood.household.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    applied_on = mapped_column(Date, nullable=False)
+    source_meal_plan_id = mapped_column(String(100), nullable=True)
+    source_created_at = mapped_column(DateTime(timezone=True), nullable=True)
+    breakfast = mapped_column(JSONB, nullable=False, default=dict)
+    lunch = mapped_column(JSONB, nullable=False, default=dict)
+    dinner = mapped_column(JSONB, nullable=False, default=dict)
+    reasoning = mapped_column(Text, nullable=True)
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    household: Mapped["Household"] = relationship("Household", back_populates="meal_plans")
+    assignments: Mapped[List["MealPlanMember"]] = relationship(
+        "MealPlanMember", back_populates="meal_plan", cascade="all, delete-orphan"
+    )
+
+    def to_dict(
+        self,
+        include_member_ids: bool = False,
+        current_member_id: Optional[str] = None,
+    ) -> dict:
+        result = {
+            "id": self.id,
+            "household_id": self.household_id,
+            "date": self.applied_on.isoformat(),
+            "source_meal_plan_id": self.source_meal_plan_id,
+            "source_created_at": self.source_created_at.isoformat() if self.source_created_at else None,
+            "breakfast": self.breakfast or {},
+            "lunch": self.lunch or {},
+            "dinner": self.dinner or {},
+            "reasoning": self.reasoning,
+            "created_at": self.created_at.isoformat(),
+        }
+
+        member_ids: List[str] = []
+        if include_member_ids:
+            insp = sa_inspect(self)
+            if "assignments" not in insp.unloaded:
+                member_ids = sorted([a.member_id for a in self.assignments])
+            result["applies_to_member_ids"] = member_ids
+            if current_member_id:
+                result["other_member_ids"] = [mid for mid in member_ids if mid != current_member_id]
+            else:
+                result["other_member_ids"] = member_ids
+
+        return result
+
+
+class MealPlanMember(Base):
+    """
+    Join table assigning a meal plan to household members.
+    """
+
+    __tablename__ = "meal_plan_member"
+    __table_args__ = (
+        UniqueConstraint("meal_plan_id", "member_id", name="uq_meal_plan_member_plan_member"),
+        Index("ix_meal_plan_member_member_id", "member_id"),
+        {"schema": "wisefood"},
+    )
+
+    id = mapped_column(String(64), primary_key=True, default=lambda: str(uuid4()))
+    meal_plan_id = mapped_column(
+        String(64),
+        ForeignKey("wisefood.meal_plan.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    member_id = mapped_column(
+        String(100),
+        ForeignKey("wisefood.household_member.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    meal_plan: Mapped["MealPlan"] = relationship("MealPlan", back_populates="assignments")
+    member: Mapped["HouseholdMember"] = relationship("HouseholdMember", back_populates="meal_plan_assignments")

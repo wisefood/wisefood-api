@@ -5,7 +5,7 @@ Pydantic schemas for API request/response validation (no forward refs)
 - No `.model_rebuild()` calls needed
 """
 
-from datetime import datetime
+from datetime import date as DateType, datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -463,3 +463,91 @@ class FoodChatCreateSessionRequest(BaseModel):
 class FoodChatMessageRequest(BaseModel):
     """Request payload for sending a message in a FoodChat session."""
     content: str = Field(..., min_length=1, description="Message content to send")
+
+
+# ---------- Meal Plan Storage Schemas ----------
+
+class MealPlanMeal(BaseModel):
+    recipe_id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
+    ingredients: str = Field(..., min_length=1)
+    directions: str = Field(..., min_length=1)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MealPlanItem(BaseModel):
+    """
+    Meal plan object as returned by FoodChat result entries.
+    """
+
+    id: Optional[str] = Field(default=None, description="Source meal plan id from upstream app")
+    created_at: Optional[datetime] = Field(default=None, description="Source creation time from upstream app")
+    breakfast: MealPlanMeal
+    lunch: MealPlanMeal
+    dinner: MealPlanMeal
+    reasoning: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatMealPlanEnvelope(BaseModel):
+    help: Optional[str] = None
+    success: bool = True
+    result: List[MealPlanItem] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MealPlanStoreRequest(BaseModel):
+    date: Optional[DateType] = Field(
+        default=None,
+        description="Date the meal plan applies to. Defaults to current date if omitted.",
+    )
+    applies_to_member_ids: List[str] = Field(
+        default_factory=list,
+        description="Additional member ids in the same household that share this plan.",
+    )
+    meal_plan: Optional[MealPlanItem] = Field(
+        default=None,
+        description="Direct meal plan item payload.",
+    )
+    foodchat_response: Optional[FoodChatMealPlanEnvelope] = Field(
+        default=None,
+        description="Optional raw FoodChat response envelope (help/success/result).",
+    )
+
+    @model_validator(mode="after")
+    def _ensure_meal_plan_source(self):
+        if self.meal_plan is not None:
+            return self
+        if self.foodchat_response is None:
+            raise ValueError("Either meal_plan or foodchat_response must be provided")
+        if not self.foodchat_response.result:
+            raise ValueError("foodchat_response.result must contain at least one meal plan")
+        self.meal_plan = self.foodchat_response.result[0]
+        return self
+
+
+class MealPlanResponse(BaseModel):
+    id: str
+    household_id: str
+    date: DateType
+    source_meal_plan_id: Optional[str] = None
+    source_created_at: Optional[datetime] = None
+    breakfast: Dict[str, Any]
+    lunch: Dict[str, Any]
+    dinner: Dict[str, Any]
+    reasoning: Optional[str] = None
+    applies_to_member_ids: List[str] = Field(default_factory=list)
+    other_member_ids: List[str] = Field(default_factory=list)
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MealPlanRevokeResponse(BaseModel):
+    meal_plan_id: str
+    revoked_for_member_id: str
+    revoked_for_all_members: bool
+    meal_plan_deleted: bool
