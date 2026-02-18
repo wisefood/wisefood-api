@@ -8,6 +8,7 @@ from schemas import (
     RecipeProfileRequest,
     RecipeProfileResponse,
     RecipeSearchRequest,
+    RecipeParamSearchRequest,
     RecipeDetailResponse
 )
 
@@ -36,6 +37,20 @@ async def search_recipes(payload: RecipeSearchRequest, request: Request):
     return await RECIPEWRANGLER.search_recipes(
         question=payload.question,
         exclude_allergens=payload.exclude_allergens
+    )
+
+
+@router.post("/recipes/param_search", dependencies=[Depends(auth())])
+@render()
+async def param_search_recipes(payload: RecipeParamSearchRequest, request: Request):
+    """Run deterministic parameter-based recipe search."""
+    return await RECIPEWRANGLER.param_search_recipes(
+        include_ingredients=payload.include_ingredients,
+        exclude_ingredients=payload.exclude_ingredients,
+        exclude_allergens=payload.exclude_allergens,
+        diet_tags=payload.diet_tags,
+        max_duration_minutes=payload.max_duration_minutes,
+        limit=payload.limit,
     )
 
 

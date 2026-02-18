@@ -104,6 +104,27 @@ class RecipeWrangler:
         return await cls.post("/api/v1/recipes/search", json=payload)
 
     @classmethod
+    async def param_search_recipes(
+        cls,
+        include_ingredients: list[str] = None,
+        exclude_ingredients: list[str] = None,
+        exclude_allergens: list[str] = None,
+        diet_tags: list[str] = None,
+        max_duration_minutes: Optional[int] = None,
+        limit: int = 10,
+    ):
+        """Run deterministic parameter-based recipe search."""
+        payload = {
+            "include_ingredients": include_ingredients or [],
+            "exclude_ingredients": exclude_ingredients or [],
+            "exclude_allergens": exclude_allergens or [],
+            "diet_tags": diet_tags or [],
+            "max_duration_minutes": max_duration_minutes,
+            "limit": limit,
+        }
+        return await cls.post("/api/v1/recipes/param_search", json=payload)
+
+    @classmethod
     async def profile_recipe(cls, raw_recipe: str):
         """Run parsing + profiling pipeline on raw recipe text."""
         payload = {"raw_recipe": raw_recipe}

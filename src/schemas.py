@@ -433,6 +433,37 @@ class RecipeSearchRequest(BaseModel):
     )
 
 
+class RecipeParamSearchRequest(BaseModel):
+    """Request payload for deterministic parameter-based recipe search endpoint"""
+    include_ingredients: List[str] = Field(
+        default_factory=list,
+        description="Ingredient names that should be present in the recipe",
+    )
+    exclude_ingredients: List[str] = Field(
+        default_factory=list,
+        description="Ingredient names that should not be present in the recipe",
+    )
+    exclude_allergens: List[str] = Field(
+        default_factory=list,
+        description="Allergen names to exclude",
+    )
+    diet_tags: List[str] = Field(
+        default_factory=list,
+        description="Diet tags to enforce (e.g., vegan, gluten_free)",
+    )
+    max_duration_minutes: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Maximum recipe duration in minutes",
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of results to return",
+    )
+
+
 class RecipeDetailResponse(BaseModel):
     """Detailed recipe representation fetched from Neo4j"""
     recipe_id: str
