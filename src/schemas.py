@@ -212,6 +212,29 @@ class ArticleInput(BaseModel):
         default=None, description="Comma-separated list of authors"
     )
 
+
+class GuidelineImportRequest(BaseModel):
+    guide_id: str = Field(..., min_length=1, description="WiseFood guide identifier")
+    dry_run: bool = Field(
+        default=True,
+        description="Preview the guideline import without creating guide entries",
+    )
+    dedupe_against_guide: bool = Field(
+        default=True,
+        description="Skip extracted guidelines that already exist in the guide",
+    )
+    action_type: str = Field(
+        default="encourage",
+        min_length=1,
+        description="Action type assigned to imported guide guidelines",
+    )
+    existing_scan_limit: int = Field(
+        default=500,
+        ge=1,
+        description="Maximum number of existing guide guidelines to scan for dedupe",
+    )
+
+
 class QAModeEnum(str, Enum):
     simple = "simple"
     advanced = "advanced"

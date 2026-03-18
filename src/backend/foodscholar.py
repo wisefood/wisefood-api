@@ -174,5 +174,21 @@ class FoodScholar:
     async def get_tips(cls):
         return await FOODSCHOLAR.get("/api/v1/qa/tips")
 
+    @classmethod
+    async def get_guideline_storage(cls, artifact_uuid: str):
+        return await cls.get(f"/api/v1/guidelines/storage/{artifact_uuid}")
+
+    @classmethod
+    async def enqueue_guideline_extraction(cls, artifact_uuid: str):
+        return await cls.post(f"/api/v1/guidelines/extract/{artifact_uuid}", json={})
+
+    @classmethod
+    async def get_guideline_extraction_status(cls, artifact_uuid: str):
+        return await cls.get(f"/api/v1/guidelines/extract/{artifact_uuid}")
+
+    @classmethod
+    async def import_guidelines(cls, artifact_uuid: str, payload: dict):
+        return await cls.post(f"/api/v1/guidelines/import/{artifact_uuid}", json=payload)
+
 
 FOODSCHOLAR = FoodScholar.get_client()

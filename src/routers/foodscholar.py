@@ -6,6 +6,7 @@ from auth import auth
 from schemas import (
     ArticleInput,
     ChatRequest,
+    GuidelineImportRequest,
     QAFeedbackRequest,
     QARequest,
     SummarizeRequest,
@@ -134,3 +135,31 @@ async def list_qa_questions(request: Request):
 @render()
 async def list_qa_tips(request: Request):
     return await FOODSCHOLAR.get_tips()
+
+
+@router.get("/guidelines/storage/{artifact_uuid}", dependencies=[Depends(auth())])
+@render()
+async def get_guideline_storage(request: Request, artifact_uuid: str):
+    return await FOODSCHOLAR.get_guideline_storage(artifact_uuid)
+
+
+@router.post("/guidelines/extract/{artifact_uuid}", dependencies=[Depends(auth())])
+@render()
+async def enqueue_guideline_extraction(request: Request, artifact_uuid: str):
+    return await FOODSCHOLAR.enqueue_guideline_extraction(artifact_uuid)
+
+
+@router.get("/guidelines/extract/{artifact_uuid}", dependencies=[Depends(auth())])
+@render()
+async def get_guideline_extraction_status(request: Request, artifact_uuid: str):
+    return await FOODSCHOLAR.get_guideline_extraction_status(artifact_uuid)
+
+
+@router.post("/guidelines/import/{artifact_uuid}", dependencies=[Depends(auth())])
+@render()
+async def import_guidelines(
+    request: Request, artifact_uuid: str, body: GuidelineImportRequest
+):
+    return await FOODSCHOLAR.import_guidelines(
+        artifact_uuid, body.model_dump(exclude_none=True)
+    )
