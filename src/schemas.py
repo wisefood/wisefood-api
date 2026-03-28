@@ -412,6 +412,16 @@ class IngredientProfile(BaseModel):
 class RecipeProfileRequest(BaseModel):
     """Request payload for recipe profiling endpoint"""
     raw_recipe: str = Field(..., min_length=1, description="Unstructured recipe text to analyze")
+    region: Optional[str] = Field(
+        default=None,
+        min_length=2,
+        max_length=2,
+        description="Optional ISO-3166-1 alpha-2 region code used during profiling",
+    )
+    persist_trace: bool = Field(
+        default=False,
+        description="Whether to persist profiling trace/debug information upstream",
+    )
 
 
 class RecipeProfileResponse(BaseModel):

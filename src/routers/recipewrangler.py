@@ -1,5 +1,4 @@
-
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, Query
 from routers.generic import render
 import logging
 from auth import auth
@@ -58,4 +57,29 @@ async def param_search_recipes(payload: RecipeParamSearchRequest, request: Reque
 @render()
 async def profile_recipe(payload: RecipeProfileRequest, request: Request):
     """Run parsing + profiling pipeline on raw recipe text."""
-    return await RECIPEWRANGLER.profile_recipe(raw_recipe=payload.raw_recipe)
+    return await RECIPEWRANGLER.profile_recipe(
+        raw_recipe=payload.raw_recipe,
+        region=payload.region,
+        persist_trace=payload.persist_trace,
+    )
+
+
+@router.get("/recipes/autocomplete", dependencies=[Depends(auth())])
+@render()
+async def autocomplete_recipes(
+    request: Request,
+    q: str = Query(
+        default="",
+        min_length=0,
+        max_length=120,
+        description="Query string used to autocomplete recipe titles",
+    ),
+    limit: int = Query(
+        default=8,
+        ge=1,
+        le=20,
+        description="Maximum number of autocomplete suggestions to return",
+    ),
+):
+    """Autocomplete recipe titles from Elasticsearch."""
+    return await RECIPEWRANGLER.autocomplete_recipes(q=q, limit=limit)

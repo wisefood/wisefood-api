@@ -125,9 +125,27 @@ class RecipeWrangler:
         return await cls.post("/api/v1/recipes/param_search", json=payload)
 
     @classmethod
-    async def profile_recipe(cls, raw_recipe: str):
+    async def profile_recipe(
+        cls,
+        raw_recipe: str,
+        region: Optional[str] = None,
+        persist_trace: bool = False,
+    ):
         """Run parsing + profiling pipeline on raw recipe text."""
-        payload = {"raw_recipe": raw_recipe}
+        payload = {
+            "raw_recipe": raw_recipe,
+            "persist_trace": persist_trace,
+        }
+        if region is not None:
+            payload["region"] = region
         return await cls.post("/api/v1/recipes/profile", json=payload)
+
+    @classmethod
+    async def autocomplete_recipes(cls, q: str = "", limit: int = 8):
+        """Autocomplete recipe titles from Elasticsearch."""
+        return await cls.get(
+            "/api/v1/recipes/autocomplete",
+            params={"q": q, "limit": limit},
+        )
 
 RECIPEWRANGLER = RecipeWrangler.get_client()
