@@ -5,10 +5,12 @@ from auth import auth
 from backend.recipewrangler import RECIPEWRANGLER
 from schemas import (
     RecipeProfileRequest,
-    RecipeProfileResponse,
     RecipeSearchRequest,
     RecipeParamSearchRequest,
-    RecipeDetailResponse
+    RecipeCreateRequest,
+    RecipeCreateResponse,
+    RecipeUpdateRequest,
+    RecipeUpdateResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,11 +24,57 @@ async def status(request: Request):
     return await RECIPEWRANGLER.status()
 
 
+@router.post("/recipes/", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def create_recipe(payload: RecipeCreateRequest, request: Request):
+    """Create a new structured recipe. Admin and expert roles only."""
+    created = await RECIPEWRANGLER.create_recipe(
+        payload.model_dump(exclude_none=True)
+    )
+    return RecipeCreateResponse(**created)
+
+
+@router.get("/recipes/autocomplete", dependencies=[Depends(auth())])
+@render()
+async def autocomplete_recipes(
+    request: Request,
+    q: str = Query(
+        default="",
+        min_length=0,
+        max_length=120,
+        description="Query string used to autocomplete recipe titles",
+    ),
+    limit: int = Query(
+        default=8,
+        ge=1,
+        le=20,
+        description="Maximum number of autocomplete suggestions to return",
+    ),
+):
+    """Autocomplete recipe titles from Elasticsearch."""
+    return await RECIPEWRANGLER.autocomplete_recipes(q=q, limit=limit)
+
+
 @router.get("/recipes/{recipe_id}", dependencies=[Depends(auth())])
 @render()
 async def get_recipe(recipe_id: str, request: Request):
     """Retrieve a recipe with full metadata by id."""
     return await RECIPEWRANGLER.get_recipe(recipe_id)
+
+
+@router.patch("/recipes/{recipe_id}", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def update_recipe(
+    recipe_id: str,
+    payload: RecipeUpdateRequest,
+    request: Request,
+):
+    """Update recipe instructions and/or image URL. Admin and expert roles only."""
+    updated = await RECIPEWRANGLER.update_recipe(
+        recipe_id,
+        payload.model_dump(exclude_none=True),
+    )
+    return RecipeUpdateResponse(**updated)
 
 
 @router.post("/recipes/search", dependencies=[Depends(auth())])
@@ -62,24 +110,3 @@ async def profile_recipe(payload: RecipeProfileRequest, request: Request):
         region=payload.region,
         persist_trace=payload.persist_trace,
     )
-
-
-@router.get("/recipes/autocomplete", dependencies=[Depends(auth())])
-@render()
-async def autocomplete_recipes(
-    request: Request,
-    q: str = Query(
-        default="",
-        min_length=0,
-        max_length=120,
-        description="Query string used to autocomplete recipe titles",
-    ),
-    limit: int = Query(
-        default=8,
-        ge=1,
-        le=20,
-        description="Maximum number of autocomplete suggestions to return",
-    ),
-):
-    """Autocomplete recipe titles from Elasticsearch."""
-    return await RECIPEWRANGLER.autocomplete_recipes(q=q, limit=limit)

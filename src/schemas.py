@@ -517,6 +517,80 @@ class RecipeDetailResponse(BaseModel):
     nutri_score: Optional[float] = None
 
 
+class RecipeCreateRequest(BaseModel):
+    """Request payload for creating a structured recipe."""
+    title: str = Field(..., min_length=1, description="Recipe title")
+    ingredients: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Raw ingredient strings used to build the recipe",
+    )
+    instructions: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Ordered preparation instructions",
+    )
+    duration: int = Field(..., ge=1, description="Recipe duration in minutes")
+    serves: int = Field(..., ge=1, description="Number of servings")
+    region: str = Field(
+        ...,
+        min_length=2,
+        max_length=2,
+        description="ISO-3166-1 alpha-2 region code",
+    )
+    image_url: Optional[str] = Field(default=None, description="Recipe image URL")
+    tags: List[str] = Field(default_factory=list, description="Diet or recipe tags")
+    allergens: List[str] = Field(
+        default_factory=list,
+        description="User-supplied allergens to merge into the recipe graph",
+    )
+
+    @field_validator("region", mode="before")
+    @classmethod
+    def _normalize_region(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class RecipeCreateResponse(BaseModel):
+    """Response payload for a created recipe."""
+    recipe_id: str
+    message: str = "Recipe created successfully"
+
+
+class RecipeUpdateRequest(BaseModel):
+    """Request payload for patching mutable recipe fields."""
+    instructions: Optional[List[str]] = Field(
+        default=None,
+        description="Updated ordered preparation instructions",
+    )
+    image_url: Optional[str] = Field(default=None, description="Updated recipe image URL")
+
+    @model_validator(mode="after")
+    def _ensure_mutable_field_present(self):
+        if self.instructions is None and self.image_url is None:
+            raise ValueError("Either instructions or image_url must be provided")
+        return self
+
+
+class RecipeUpdateResponse(BaseModel):
+    """Response payload for a patched recipe."""
+    recipe_id: str
+    updated_fields: List[str] = Field(default_factory=list)
+    message: str = "Recipe updated successfully"
+
+
+class ImageUploadResponse(BaseModel):
+    """Response payload for a stored image."""
+    id: str
+    image_id: str
+    bucket: str
+    content_type: str
+    original_size_bytes: int = Field(..., ge=1)
+    stored_size_bytes: int = Field(..., ge=1)
+    compressed: bool = False
+    image_url: Optional[str] = None
+
+
 # ---------- FoodChat Schemas ----------
 
 class FoodChatCreateSessionRequest(BaseModel):

@@ -1,8 +1,6 @@
-import uuid
 import httpx
 from typing import Any, Dict, Optional
 from main import config
-from api.v1.households import HOUSEHOLD
 import logging
 
 logger = logging.getLogger(__name__)
@@ -66,6 +64,16 @@ class RecipeWrangler:
                 "RecipeWrangler client not initialized. Call get_client() first."
             )
         response = await cls._client.put(endpoint, data=data, json=json, **kwargs)
+        response.raise_for_status()
+        return response.json()
+
+    @classmethod
+    async def patch(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
+        if cls._client is None:
+            raise RuntimeError(
+                "RecipeWrangler client not initialized. Call get_client() first."
+            )
+        response = await cls._client.patch(endpoint, data=data, json=json, **kwargs)
         response.raise_for_status()
         return response.json()
 
@@ -147,5 +155,15 @@ class RecipeWrangler:
             "/api/v1/recipes/autocomplete",
             params={"q": q, "limit": limit},
         )
+
+    @classmethod
+    async def create_recipe(cls, payload: Dict[str, Any]):
+        """Create a new structured recipe."""
+        return await cls.post("/api/v1/recipes/", json=payload)
+
+    @classmethod
+    async def update_recipe(cls, recipe_id: str, payload: Dict[str, Any]):
+        """Patch mutable recipe fields on an existing recipe."""
+        return await cls.patch(f"/api/v1/recipes/{recipe_id}", json=payload)
 
 RECIPEWRANGLER = RecipeWrangler.get_client()
