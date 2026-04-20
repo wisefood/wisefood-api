@@ -83,6 +83,13 @@ class DietaryGroupEnum(str, Enum):
     DIABETIC_FRIENDLY = "diabetic_friendly"
 
 
+class RecipeRegionEnum(str, Enum):
+    """Supported nutrition regions for recipe lookups."""
+    US = "US"
+    IE = "IE"
+    HU = "HU"
+
+
 # ---------- Household Member Profile Schemas ----------
 class HouseholdMemberProfileBase(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
@@ -564,11 +571,43 @@ class RecipeUpdateRequest(BaseModel):
         description="Updated ordered preparation instructions",
     )
     image_url: Optional[str] = Field(default=None, description="Updated recipe image URL")
+    source_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Updated upstream source identifier",
+    )
+    expert_recipe: Optional[bool] = Field(
+        default=None,
+        description="Whether the recipe is marked as expert-curated",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Updated recipe title",
+    )
+    allergens: Optional[List[str]] = Field(
+        default=None,
+        description="Updated allergen list",
+    )
+    duration: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Updated recipe duration in minutes",
+    )
 
     @model_validator(mode="after")
     def _ensure_mutable_field_present(self):
-        if self.instructions is None and self.image_url is None:
-            raise ValueError("Either instructions or image_url must be provided")
+        mutable_fields = (
+            self.instructions,
+            self.image_url,
+            self.source_id,
+            self.expert_recipe,
+            self.title,
+            self.allergens,
+            self.duration,
+        )
+        if all(value is None for value in mutable_fields):
+            raise ValueError("At least one mutable recipe field must be provided")
         return self
 
 

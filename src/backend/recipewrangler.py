@@ -98,9 +98,23 @@ class RecipeWrangler:
         return await cls.get("/health")
 
     @classmethod
-    async def get_recipe(cls, recipe_id: str):
-        """Retrieve a recipe with full metadata by id."""
-        return await cls.get(f"/api/v1/recipes/{recipe_id}")
+    async def get_recipe(
+        cls,
+        recipe_id: str,
+        *,
+        region: Optional[str] = None,
+        slim: bool = False,
+    ):
+        """Retrieve a recipe by id, optionally requesting a slim response."""
+        params: Dict[str, Any] = {}
+        if region is not None:
+            params["region"] = region.strip().upper()
+        if slim:
+            params["slim"] = True
+        return await cls.get(
+            f"/api/v1/recipes/{recipe_id}",
+            params=params or None,
+        )
 
     @classmethod
     async def search_recipes(cls, question: str, exclude_allergens: list[str] = None):

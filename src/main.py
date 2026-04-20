@@ -120,7 +120,7 @@ api.add_middleware(
     CORSMiddleware,
     allow_origins=origins,            # list of allowed origins (or ["*"] for any origin)
     allow_credentials=True,           # set True if you send cookies / Authorization headers
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],              # or list specific headers
     expose_headers=["Content-Length"],# optionally expose headers to browser
 )

@@ -9,6 +9,7 @@ from schemas import (
     RecipeParamSearchRequest,
     RecipeCreateRequest,
     RecipeCreateResponse,
+    RecipeRegionEnum,
     RecipeUpdateRequest,
     RecipeUpdateResponse,
 )
@@ -57,9 +58,24 @@ async def autocomplete_recipes(
 
 @router.get("/recipes/{recipe_id}", dependencies=[Depends(auth())])
 @render()
-async def get_recipe(recipe_id: str, request: Request):
-    """Retrieve a recipe with full metadata by id."""
-    return await RECIPEWRANGLER.get_recipe(recipe_id)
+async def get_recipe(
+    recipe_id: str,
+    request: Request,
+    region: RecipeRegionEnum | None = Query(
+        default=None,
+        description="Optional nutrition region selector: US, IE, or HU.",
+    ),
+    slim: bool = Query(
+        default=False,
+        description="When true, return only card-level fields with no nutrition data.",
+    ),
+):
+    """Retrieve a recipe by id, optionally using its lightweight card representation."""
+    return await RECIPEWRANGLER.get_recipe(
+        recipe_id,
+        region=region.value if region else None,
+        slim=slim,
+    )
 
 
 @router.patch("/recipes/{recipe_id}", dependencies=[Depends(auth("admin,expert"))])
@@ -69,7 +85,7 @@ async def update_recipe(
     payload: RecipeUpdateRequest,
     request: Request,
 ):
-    """Update recipe instructions and/or image URL. Admin and expert roles only."""
+    """Patch mutable recipe fields on an existing recipe. Admin and expert roles only."""
     updated = await RECIPEWRANGLER.update_recipe(
         recipe_id,
         payload.model_dump(exclude_none=True),
