@@ -125,4 +125,5 @@ async def profile_recipe(payload: RecipeProfileRequest, request: Request):
         raw_recipe=payload.raw_recipe,
         region=payload.region,
         persist_trace=payload.persist_trace,
+        parse_only=payload.parse_only,
     )

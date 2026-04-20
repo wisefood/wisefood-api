@@ -152,11 +152,13 @@ class RecipeWrangler:
         raw_recipe: str,
         region: Optional[str] = None,
         persist_trace: bool = False,
+        parse_only: bool = False,
     ):
         """Run parsing + profiling pipeline on raw recipe text."""
         payload = {
             "raw_recipe": raw_recipe,
             "persist_trace": persist_trace,
+            "parse_only": parse_only,
         }
         if region is not None:
             payload["region"] = region

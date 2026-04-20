@@ -429,6 +429,13 @@ class RecipeProfileRequest(BaseModel):
         default=False,
         description="Whether to persist profiling trace/debug information upstream",
     )
+    parse_only: bool = Field(
+        default=False,
+        description=(
+            "When true, return a create-compatible parsed payload with "
+            "pre-populated ingredients, instructions, duration, serves, allergens, and tags"
+        ),
+    )
 
 
 class RecipeProfileResponse(BaseModel):
