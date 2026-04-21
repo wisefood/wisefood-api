@@ -175,6 +175,11 @@ class RecipeWrangler:
         )
 
     @classmethod
+    async def count_recipes(cls):
+        """Return the total number of recipes in the graph."""
+        return await cls.get("/api/v1/recipes/count")
+
+    @classmethod
     async def create_recipe(cls, payload: Dict[str, Any]):
         """Create a new structured recipe."""
         return await cls.post("/api/v1/recipes/", json=payload)

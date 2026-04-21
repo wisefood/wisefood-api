@@ -58,6 +58,13 @@ async def autocomplete_recipes(
     return await RECIPEWRANGLER.autocomplete_recipes(q=q, limit=limit)
 
 
+@router.get("/recipes/count", dependencies=[Depends(auth())])
+@render()
+async def get_recipe_count(request: Request):
+    """Return the total number of recipes in the graph."""
+    return await RECIPEWRANGLER.count_recipes()
+
+
 @router.get("/recipes/{recipe_id}", dependencies=[Depends(auth())])
 @render()
 async def get_recipe(
