@@ -473,7 +473,7 @@ class RecipeProfileResponse(BaseModel):
 
 class RecipeSearchRequest(BaseModel):
     """Request payload for recipe search endpoint"""
-    question: str = Field(..., min_length=1, description="Natural language recipe question")
+    question: str = Field(default="", description="Natural language recipe question")
     exclude_allergens: List[str] = Field(
         default_factory=list,
         description="Allergen names to exclude (e.g., ['peanut', 'tree_nut'])"
@@ -508,6 +508,11 @@ class RecipeParamSearchRequest(BaseModel):
         ge=1,
         le=100,
         description="Maximum number of results to return",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Number of results to skip for pagination",
     )
 
 
@@ -553,10 +558,59 @@ class RecipeCreateRequest(BaseModel):
         description="ISO-3166-1 alpha-2 region code",
     )
     image_url: Optional[str] = Field(default=None, description="Recipe image URL")
+    source_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Optional upstream source identifier",
+    )
+    expert_recipe: bool = Field(
+        default=False,
+        description="Whether the recipe is marked as expert-curated",
+    )
     tags: List[str] = Field(default_factory=list, description="Diet or recipe tags")
     allergens: List[str] = Field(
         default_factory=list,
         description="User-supplied allergens to merge into the recipe graph",
+    )
+    protein_g: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total protein in grams",
+    )
+    carbohydrate_g: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total carbohydrate in grams",
+    )
+    fat_g: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total fat in grams",
+    )
+    energy_kcal: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total energy in kcal",
+    )
+    sugar_g: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total sugar in grams",
+    )
+    saturated_fat_g: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total saturated fat in grams",
+    )
+    sodium_mg: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total sodium in milligrams",
+    )
+    fibre_g: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional total fibre in grams",
     )
 
     @field_validator("region", mode="before")
@@ -596,6 +650,10 @@ class RecipeUpdateRequest(BaseModel):
         default=None,
         description="Updated allergen list",
     )
+    tags: Optional[List[str]] = Field(
+        default=None,
+        description="Updated diet or recipe tags",
+    )
     duration: Optional[int] = Field(
         default=None,
         ge=1,
@@ -611,6 +669,7 @@ class RecipeUpdateRequest(BaseModel):
             self.expert_recipe,
             self.title,
             self.allergens,
+            self.tags,
             self.duration,
         )
         if all(value is None for value in mutable_fields):
@@ -622,7 +681,29 @@ class RecipeUpdateResponse(BaseModel):
     """Response payload for a patched recipe."""
     recipe_id: str
     updated_fields: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    allergens: List[str] = Field(default_factory=list)
     message: str = "Recipe updated successfully"
+
+
+class RecipeSubstituteRequest(BaseModel):
+    """Request payload for substituting one ingredient in a recipe."""
+    ingredient: str = Field(..., min_length=1, description="Ingredient to substitute")
+    region: RecipeRegionEnum = Field(
+        default=RecipeRegionEnum.IE,
+        description="Nutrition region used to re-profile the modified recipe",
+    )
+
+
+class RecipeSubstituteResponse(BaseModel):
+    """Response payload for an ingredient substitution and modified nutrition profile."""
+    original_ingredient: str
+    substitute: Optional[str] = None
+    substitution_source: Optional[str] = None
+    candidates: List[str] = Field(default_factory=list)
+    modified_recipe_profile: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="allow")
 
 
 class ImageUploadResponse(BaseModel):

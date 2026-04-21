@@ -134,6 +134,7 @@ class RecipeWrangler:
         diet_tags: list[str] = None,
         max_duration_minutes: Optional[int] = None,
         limit: int = 10,
+        offset: int = 0,
     ):
         """Run deterministic parameter-based recipe search."""
         payload = {
@@ -143,6 +144,7 @@ class RecipeWrangler:
             "diet_tags": diet_tags or [],
             "max_duration_minutes": max_duration_minutes,
             "limit": limit,
+            "offset": offset,
         }
         return await cls.post("/api/v1/recipes/param_search", json=payload)
 
@@ -181,5 +183,19 @@ class RecipeWrangler:
     async def update_recipe(cls, recipe_id: str, payload: Dict[str, Any]):
         """Patch mutable recipe fields on an existing recipe."""
         return await cls.patch(f"/api/v1/recipes/{recipe_id}", json=payload)
+
+    @classmethod
+    async def substitute_recipe_ingredient(
+        cls,
+        recipe_id: str,
+        ingredient: str,
+        region: str = "IE",
+    ):
+        """Substitute an ingredient and return the updated nutrition profile."""
+        payload = {
+            "ingredient": ingredient,
+            "region": region,
+        }
+        return await cls.post(f"/api/v1/recipes/{recipe_id}/substitute", json=payload)
 
 RECIPEWRANGLER = RecipeWrangler.get_client()

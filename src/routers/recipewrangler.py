@@ -10,6 +10,8 @@ from schemas import (
     RecipeCreateRequest,
     RecipeCreateResponse,
     RecipeRegionEnum,
+    RecipeSubstituteRequest,
+    RecipeSubstituteResponse,
     RecipeUpdateRequest,
     RecipeUpdateResponse,
 )
@@ -114,6 +116,7 @@ async def param_search_recipes(payload: RecipeParamSearchRequest, request: Reque
         diet_tags=payload.diet_tags,
         max_duration_minutes=payload.max_duration_minutes,
         limit=payload.limit,
+        offset=payload.offset,
     )
 
 
@@ -127,3 +130,19 @@ async def profile_recipe(payload: RecipeProfileRequest, request: Request):
         persist_trace=payload.persist_trace,
         parse_only=payload.parse_only,
     )
+
+
+@router.post("/recipes/{recipe_id}/substitute", dependencies=[Depends(auth())])
+@render()
+async def substitute_recipe_ingredient(
+    recipe_id: str,
+    payload: RecipeSubstituteRequest,
+    request: Request,
+):
+    """Substitute an ingredient and return the updated nutrition profile."""
+    substituted = await RECIPEWRANGLER.substitute_recipe_ingredient(
+        recipe_id=recipe_id,
+        ingredient=payload.ingredient,
+        region=payload.region.value,
+    )
+    return RecipeSubstituteResponse(**substituted)
