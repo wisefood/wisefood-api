@@ -247,6 +247,12 @@ class QAModeEnum(str, Enum):
     advanced = "advanced"
 
 
+class QARetrieverEnum(str, Enum):
+    rag = "rag"
+    no_rag = "no_rag"
+    linearrag = "linearrag"
+
+
 class QAExpertiseLevelEnum(str, Enum):
     beginner = "beginner"
     intermediate = "intermediate"
@@ -319,6 +325,10 @@ class QARequest(BaseModel):
         default=True, description="Enable retrieval in advanced mode"
     )
     top_k: int = Field(default=5, ge=1, le=20, description="Retrieved article count")
+    retriever: QARetrieverEnum = Field(
+        default=QARetrieverEnum.rag,
+        description="Retriever backend to use: rag, no_rag, or linearrag",
+    )
     expertise_level: QAExpertiseLevelEnum = Field(
         default=QAExpertiseLevelEnum.intermediate,
         description="Answer complexity level",
