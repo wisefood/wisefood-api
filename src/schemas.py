@@ -312,6 +312,18 @@ class DualAnswerFeedback(BaseModel):
     answer_b_label: str = Field(..., description="Label describing approach B")
 
 
+class QAClarificationResponse(BaseModel):
+    question_id: str = Field(..., description="Clarification question identifier")
+    selected_values: List[str] = Field(
+        default_factory=list,
+        description="Selected clarification option values",
+    )
+    free_text: Optional[str] = Field(
+        default=None,
+        description="Free-text clarification response",
+    )
+
+
 class QARequest(BaseModel):
     question: str = Field(
         ..., min_length=3, max_length=1000, description="Food science question"
@@ -339,6 +351,15 @@ class QARequest(BaseModel):
     )
     member_id: Optional[str] = Field(
         default=None, description="Optional member identifier for tracking"
+    )
+    experience_group: Optional[str] = Field(
+        default=None, description="Optional user experience group for tracking"
+    )
+    qa_thread_id: Optional[str] = Field(
+        default=None, description="Optional QA thread identifier for follow-up questions"
+    )
+    clarification_response: Optional[QAClarificationResponse] = Field(
+        default=None, description="Optional answer to a requested clarification"
     )
 
 
