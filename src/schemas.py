@@ -761,6 +761,139 @@ class FoodChatMessageRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Message content to send")
 
 
+class FoodChatChatRequest(FoodChatMessageRequest):
+    """Request payload for the unified FoodChat conversation endpoint."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+
+
+class FoodChatFeedbackRequest(BaseModel):
+    """Request payload for assistant message feedback."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    rating: str = Field(..., min_length=1, description="Feedback rating")
+    comment: Optional[str] = Field(default=None, description="Optional feedback comment")
+
+
+class FoodChatSessionResponse(BaseModel):
+    session_id: str
+    member_id: str
+    state: str
+    message_count: int
+    created_at: datetime
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatMealCourseResponse(BaseModel):
+    recipe_id: str
+    title: str
+    ingredients: str
+    directions: str
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatMealPlanResponse(BaseModel):
+    id: str
+    created_at: datetime
+    version: int
+    parent_id: Optional[str] = None
+    breakfast: FoodChatMealCourseResponse
+    lunch: FoodChatMealCourseResponse
+    dinner: FoodChatMealCourseResponse
+    reasoning: str
+    llm_score: Optional[int] = None
+    llm_reasoning: Optional[str] = None
+    fvs_count: Optional[int] = None
+    fvs_reasoning: Optional[str] = None
+    diversity_llm_score: Optional[int] = None
+    diversity_llm_reasoning: Optional[str] = None
+    guideline_adherence_score: Optional[int] = None
+    guideline_adherence_reasoning: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatWeeklyMealPlanEntryResponse(BaseModel):
+    day: int
+    meal_idx: int
+    meal_type: str
+    recipe: Dict[str, Any]
+    reward: float
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatWeeklyMealPlanResponse(BaseModel):
+    id: str
+    created_at: datetime
+    version: int
+    parent_id: Optional[str] = None
+    entries: List[FoodChatWeeklyMealPlanEntryResponse] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatMessageHistoryItem(BaseModel):
+    role: str
+    content: str
+    timestamp: datetime
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatMessageResponse(BaseModel):
+    role: str
+    content: str
+    needs_clarification: bool = False
+    meal_plan: Optional[FoodChatMealPlanResponse] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatWeeklyMessageResponse(BaseModel):
+    role: str
+    content: str
+    weekly_meal_plan: Optional[FoodChatWeeklyMealPlanResponse] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatChatTurnResponse(BaseModel):
+    role: str
+    content: str
+    intent: str
+    needs_clarification: bool = False
+    meal_plan: Optional[FoodChatMealPlanResponse] = None
+    weekly_meal_plan: Optional[FoodChatWeeklyMealPlanResponse] = None
+    at_message_limit: bool = False
+    plan_version: Optional[int] = None
+    plan_parent_id: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatConversationPage(BaseModel):
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    has_more: bool
+    next_before_id: Optional[int] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatFeedbackResponse(BaseModel):
+    message_id: int
+    rating: str
+    comment: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
 # ---------- Meal Plan Storage Schemas ----------
 
 class MealPlanMeal(BaseModel):
