@@ -132,9 +132,13 @@ class RecipeWrangler:
         exclude_ingredients: list[str] = None,
         exclude_allergens: list[str] = None,
         diet_tags: list[str] = None,
+        sources: list[str] = None,
+        dish_types: list[str] = None,
         max_duration_minutes: Optional[int] = None,
         limit: int = 10,
         offset: int = 0,
+        sort_by: str = "title_asc",
+        include_facets: bool = False,
     ):
         """Run deterministic parameter-based recipe search."""
         payload = {
@@ -142,9 +146,13 @@ class RecipeWrangler:
             "exclude_ingredients": exclude_ingredients or [],
             "exclude_allergens": exclude_allergens or [],
             "diet_tags": diet_tags or [],
+            "sources": sources or [],
+            "dish_types": dish_types or [],
             "max_duration_minutes": max_duration_minutes,
             "limit": limit,
             "offset": offset,
+            "sort_by": sort_by,
+            "include_facets": include_facets,
         }
         return await cls.post("/api/v1/recipes/param_search", json=payload)
 

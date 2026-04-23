@@ -511,6 +511,14 @@ class RecipeSearchRequest(BaseModel):
     )
 
 
+class RecipeParamSearchSortEnum(str, Enum):
+    random = "random"
+    title_asc = "title_asc"
+    title_desc = "title_desc"
+    time_asc = "time_asc"
+    time_desc = "time_desc"
+
+
 class RecipeParamSearchRequest(BaseModel):
     """Request payload for deterministic parameter-based recipe search endpoint"""
     include_ingredients: List[str] = Field(
@@ -529,6 +537,14 @@ class RecipeParamSearchRequest(BaseModel):
         default_factory=list,
         description="Diet tags to enforce (e.g., vegan, gluten_free)",
     )
+    sources: List[str] = Field(
+        default_factory=list,
+        description="Recipe sources to filter by",
+    )
+    dish_types: List[str] = Field(
+        default_factory=list,
+        description="Dish types to filter by (e.g., breakfast, dessert)",
+    )
     max_duration_minutes: Optional[int] = Field(
         default=None,
         ge=0,
@@ -544,6 +560,14 @@ class RecipeParamSearchRequest(BaseModel):
         default=0,
         ge=0,
         description="Number of results to skip for pagination",
+    )
+    sort_by: RecipeParamSearchSortEnum = Field(
+        default=RecipeParamSearchSortEnum.title_asc,
+        description="Sort order for results",
+    )
+    include_facets: bool = Field(
+        default=False,
+        description="Whether to include facet counts in the response",
     )
 
 

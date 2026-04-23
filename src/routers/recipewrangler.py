@@ -121,9 +121,13 @@ async def param_search_recipes(payload: RecipeParamSearchRequest, request: Reque
         exclude_ingredients=payload.exclude_ingredients,
         exclude_allergens=payload.exclude_allergens,
         diet_tags=payload.diet_tags,
+        sources=payload.sources,
+        dish_types=payload.dish_types,
         max_duration_minutes=payload.max_duration_minutes,
         limit=payload.limit,
         offset=payload.offset,
+        sort_by=payload.sort_by,
+        include_facets=payload.include_facets,
     )
 
 
