@@ -13,7 +13,9 @@ from minio.error import S3Error
 from PIL import Image, UnidentifiedImageError
 
 from backend.minio import MINIO_CLIENT
+from backend.redis import IMAGE_CACHE
 from exceptions import DataError, InternalError, NotFoundError
+from main import config
 from utils import is_valid_uuid
 
 
@@ -139,6 +141,17 @@ class ImageStorageService:
         if not is_valid_uuid(image_id):
             raise DataError(detail="Invalid image id")
 
+        cache_enabled = config.settings.get("CACHE_ENABLED", False)
+        if cache_enabled:
+            cached = IMAGE_CACHE.get(image_id)
+            if cached is not None:
+                data, content_type = cached
+                return {
+                    "image_id": image_id,
+                    "data": data,
+                    "content_type": content_type,
+                }
+
         client = MINIO_CLIENT()
         try:
             response = client.get_object(self.BUCKET_NAME, image_id)
@@ -151,14 +164,20 @@ class ImageStorageService:
         try:
             body = response.read()
             content_type = response.headers.get("Content-Type", "application/octet-stream")
-            return {
-                "image_id": image_id,
-                "data": body,
-                "content_type": content_type,
-            }
         finally:
             response.close()
             response.release_conn()
+
+        if cache_enabled:
+            max_bytes = config.settings.get("IMAGE_CACHE_MAX_BYTES", 0)
+            if max_bytes and len(body) <= max_bytes:
+                IMAGE_CACHE.set(image_id, body, content_type)
+
+        return {
+            "image_id": image_id,
+            "data": body,
+            "content_type": content_type,
+        }
 
 
 IMAGE_STORAGE = ImageStorageService()

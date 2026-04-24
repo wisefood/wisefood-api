@@ -70,6 +70,18 @@ class Config:
         )
         self.settings["REDIS_HOST"] = os.getenv("REDIS_HOST", "redis")
         self.settings["REDIS_PORT"] = int(os.getenv("REDIS_PORT", 6379))
+        self.settings["IMAGE_CACHE_REDIS_DB"] = int(
+            os.getenv("IMAGE_CACHE_REDIS_DB", 3)
+        )
+        self.settings["IMAGE_CACHE_MAX_ITEMS"] = int(
+            os.getenv("IMAGE_CACHE_MAX_ITEMS", 300)
+        )
+        self.settings["IMAGE_CACHE_MAX_BYTES"] = int(
+            os.getenv("IMAGE_CACHE_MAX_BYTES", 2 * 1024 * 1024)
+        )
+        self.settings["IMAGE_CACHE_TTL_SECONDS"] = int(
+            os.getenv("IMAGE_CACHE_TTL_SECONDS", 7 * 24 * 3600)
+        )
         self.settings["POSTGRES_HOST"] = os.getenv("POSTGRES_HOST", "localhost")
         self.settings["POSTGRES_PORT"] = int(os.getenv("POSTGRES_PORT", 5432))
         self.settings["POSTGRES_USER"] = os.getenv("POSTGRES_USER", "postgres")
