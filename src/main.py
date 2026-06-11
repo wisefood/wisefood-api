@@ -35,6 +35,9 @@ class Config:
         self.settings["FOODSCHOLAR_URL"] = os.getenv("FOODSCHOLAR_URL", "http://foodscholar:8001")
         self.settings["RECIPEWRANGLER_URL"] = os.getenv("RECIPEWRANGLER_URL", "http://recipewrangler:8001")
         self.settings["FOODCHAT_URL"] = os.getenv("FOODCHAT_URL", "http://foodchat:8000")
+        self.settings["LANGFUSE_BASE_URL"] = os.getenv("LANGFUSE_BASE_URL", "http://langfuse-web.langfuse.svc.cluster.local:3000")
+        self.settings["LANGFUSE_PUBLIC_KEY"] = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+        self.settings["LANGFUSE_SECRET_KEY"] = os.getenv("LANGFUSE_SECRET_KEY", "")
         self.settings["MINIO_ENDPOINT"] = os.getenv(
             "MINIO_ENDPOINT", "http://minio:9000"
         )
@@ -149,6 +152,7 @@ from routers.recipewrangler import router as recipewrangler_router
 from routers.foodchat import router as foodchat_router
 from routers.meal_plans import router as meal_plans_router
 from routers.images import router as images_router
+from routers.observability import router as observability_router
 
 api.include_router(households_router)
 api.include_router(household_members_router)
@@ -158,6 +162,7 @@ api.include_router(recipewrangler_router)
 api.include_router(foodchat_router)
 api.include_router(meal_plans_router)
 api.include_router(images_router)
+api.include_router(observability_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration
