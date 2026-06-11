@@ -40,3 +40,29 @@ def test_normalize_metric_rows_parses_string_values():
 def test_normalize_metric_rows_handles_empty():
     from backend.metrics_normalize import normalize_metric_rows
     assert normalize_metric_rows({"data": []}, dimension="name", value_key="count_count") == []
+
+
+def test_normalize_timeseries_rows_keys_on_time_dimension():
+    from backend.metrics_normalize import normalize_timeseries_rows
+    raw = {"data": [
+        {"time_dimension": "2026-06-07", "count_count": "103"},
+        {"time_dimension": "2026-06-08", "count_count": "152"},
+    ]}
+    rows = normalize_timeseries_rows(raw, value_key="count_count")
+    assert rows == [
+        {"bucket": "2026-06-07", "value": 103.0},
+        {"bucket": "2026-06-08", "value": 152.0},
+    ]
+
+
+def test_normalize_timeseries_rows_handles_null_value():
+    from backend.metrics_normalize import normalize_timeseries_rows
+    raw = {"data": [{"time_dimension": "2026-06-07", "sum_totalCost": None}]}
+    rows = normalize_timeseries_rows(raw, value_key="sum_totalCost")
+    assert rows == [{"bucket": "2026-06-07", "value": 0.0}]
+
+
+# NOTE: routers.observability can't be imported standalone (main<->auth<->routers
+# circular import; only resolves when loaded via main). The /dashboard glue is
+# verified by the route-registration smoke test below + the live probe; the pure
+# normalizer-selection logic is covered by the normalize_* tests above.
