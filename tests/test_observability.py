@@ -22,3 +22,21 @@ async def test_fetch_metrics_returns_empty_when_disabled():
         dimension="name", from_ts="2026-06-01T00:00:00Z", to_ts="2026-06-11T00:00:00Z",
     )
     assert result == {"data": []}
+
+
+def test_normalize_metric_rows_parses_string_values():
+    from backend.metrics_normalize import normalize_metric_rows
+    raw = {"data": [
+        {"name": "qa-answer", "count_count": "10"},
+        {"name": "meal-plan", "count_count": "5"},
+    ]}
+    rows = normalize_metric_rows(raw, dimension="name", value_key="count_count")
+    assert rows == [
+        {"label": "qa-answer", "value": 10.0},
+        {"label": "meal-plan", "value": 5.0},
+    ]
+
+
+def test_normalize_metric_rows_handles_empty():
+    from backend.metrics_normalize import normalize_metric_rows
+    assert normalize_metric_rows({"data": []}, dimension="name", value_key="count_count") == []
