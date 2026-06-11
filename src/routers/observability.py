@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from auth import auth
 from backend.langfuse_read import LANGFUSE_READ, langfuse_read_enabled
-from backend.metrics_normalize import normalize_metric_rows, normalize_timeseries_rows
+from backend.metrics_normalize import metric_value_key, normalize_metric_rows, normalize_timeseries_rows
 from routers.generic import render
 
 router = APIRouter(prefix="/api/v1/observability", tags=["Observability"])
@@ -35,7 +35,7 @@ async def metrics(
         view=view, measure=measure, aggregation=aggregation,
         dimension=dimension, from_ts=from_ts, to_ts=to_ts, granularity=granularity,
     )
-    value_key = f"{measure}_{aggregation}"
+    value_key = metric_value_key(measure, aggregation)
     rows = normalize_metric_rows(raw, dimension=dimension or "name", value_key=value_key)
     return {"rows": rows, "enabled": langfuse_read_enabled()}
 
@@ -69,7 +69,7 @@ async def _metric(view, measure, aggregation, dimension, from_ts, to_ts, granula
         view=view, measure=measure, aggregation=aggregation,
         dimension=dimension, from_ts=from_ts, to_ts=to_ts, granularity=granularity,
     )
-    value_key = f"{measure}_{aggregation}"
+    value_key = metric_value_key(measure, aggregation)
     if granularity:
         return normalize_timeseries_rows(raw, value_key=value_key)
     return normalize_metric_rows(raw, dimension=dimension or "name", value_key=value_key)

@@ -62,6 +62,27 @@ def test_normalize_timeseries_rows_handles_null_value():
     assert rows == [{"bucket": "2026-06-07", "value": 0.0}]
 
 
+def test_metric_value_key_is_aggregation_first():
+    # Langfuse names columns <aggregation>_<measure>; getting this backwards
+    # silently empties the cost/tokens/latency panels.
+    from backend.metrics_normalize import metric_value_key
+    assert metric_value_key("totalCost", "sum") == "sum_totalCost"
+    assert metric_value_key("latency", "p95") == "p95_latency"
+    assert metric_value_key("count", "count") == "count_count"
+
+
+def test_normalize_metric_rows_with_correct_cost_key():
+    # End-to-end: the real Langfuse cost-by-model shape resolves with the helper.
+    from backend.metrics_normalize import metric_value_key, normalize_metric_rows
+    raw = {"data": [
+        {"providedModelName": "gpt-oss-20b", "sum_totalCost": 0.00313},
+        {"providedModelName": None, "sum_totalCost": None},
+    ]}
+    key = metric_value_key("totalCost", "sum")
+    rows = normalize_metric_rows(raw, dimension="providedModelName", value_key=key)
+    assert rows == [{"label": "gpt-oss-20b", "value": 0.00313}]
+
+
 # NOTE: routers.observability can't be imported standalone (main<->auth<->routers
 # circular import; only resolves when loaded via main). The /dashboard glue is
 # verified by the route-registration smoke test below + the live probe; the pure

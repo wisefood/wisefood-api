@@ -6,6 +6,13 @@ isolation and reusable across routers.
 from typing import Any, Dict, List
 
 
+def metric_value_key(measure: str, aggregation: str) -> str:
+    """Langfuse v1 names each metric column `<aggregation>_<measure>`
+    (e.g. sum_totalCost, p95_latency, count_count) — NOT measure-first. Getting
+    this order wrong silently yields null values and empty panels."""
+    return f"{aggregation}_{measure}"
+
+
 def normalize_metric_rows(raw: Dict[str, Any], *, dimension: str, value_key: str) -> List[Dict[str, Any]]:
     """Convert v1 metrics rows ({dimension: label, "<measure>_<agg>": "10"}) to
     [{label, value(float)}]. Skips rows that can't be parsed."""
