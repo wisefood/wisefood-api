@@ -63,6 +63,19 @@ class RedisClient:
         except Exception as e:
             raise BadGatewayError(e)
 
+    def incr_with_ttl(self, key, ttl_seconds):
+        """Atomically increment a counter, setting its TTL on first use."""
+        try:
+            if self._pool is None:
+                self._initialize_redis()
+            conn = redis.Redis(connection_pool=self._pool)
+            count = conn.incr(key)
+            if count == 1:
+                conn.expire(key, ttl_seconds)
+            return count
+        except Exception as e:
+            raise BadGatewayError(e)
+
 
 # Create a singleton instance of RedisClient
 REDIS = RedisClient()

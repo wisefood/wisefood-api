@@ -3,6 +3,7 @@ from routers.generic import render
 import logging
 from auth import auth
 from backend.recipewrangler import RECIPEWRANGLER
+from budget import guest_budget
 from schemas import (
     RecipeProfileRequest,
     RecipeSearchRequest,
@@ -102,7 +103,10 @@ async def update_recipe(
     return RecipeUpdateResponse(**updated)
 
 
-@router.post("/recipes/search", dependencies=[Depends(auth())])
+@router.post(
+    "/recipes/search",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
 @render()
 async def search_recipes(payload: RecipeSearchRequest, request: Request):
     """Search recipes via the knowledge graph."""
@@ -112,7 +116,10 @@ async def search_recipes(payload: RecipeSearchRequest, request: Request):
     )
 
 
-@router.post("/recipes/param_search", dependencies=[Depends(auth())])
+@router.post(
+    "/recipes/param_search",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
 @render()
 async def param_search_recipes(payload: RecipeParamSearchRequest, request: Request):
     """Run deterministic parameter-based recipe search."""
@@ -131,7 +138,10 @@ async def param_search_recipes(payload: RecipeParamSearchRequest, request: Reque
     )
 
 
-@router.post("/recipes/profile", dependencies=[Depends(auth())])
+@router.post(
+    "/recipes/profile",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
 @render()
 async def profile_recipe(payload: RecipeProfileRequest, request: Request):
     """Run parsing + profiling pipeline on raw recipe text."""
@@ -143,7 +153,10 @@ async def profile_recipe(payload: RecipeProfileRequest, request: Request):
     )
 
 
-@router.post("/recipes/{recipe_id}/substitute", dependencies=[Depends(auth())])
+@router.post(
+    "/recipes/{recipe_id}/substitute",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
 @render()
 async def substitute_recipe_ingredient(
     recipe_id: str,

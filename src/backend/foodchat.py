@@ -282,26 +282,32 @@ class FoodChat:
         )
 
     @classmethod
-    async def send_message(cls, session_id: str, content: str):
+    async def send_message(cls, session_id: str, member_id: str, content: str):
         """Send a message and get a response. Uses 60s timeout for meal plan generation."""
         return await cls.post(
             f"/foodchat/sessions/{session_id}/messages",
             json=cls._message_payload(content),
+            params=cls._member_params(member_id),
             timeout=cls._long_timeout(),
         )
 
     @classmethod
-    async def get_messages(cls, session_id: str, limit: Optional[int] = None):
+    async def get_messages(cls, session_id: str, member_id: str, limit: Optional[int] = None):
         """Get message history for a session."""
+        params = cls._member_params(member_id)
+        params.update(cls._optional_limit_params(limit) or {})
         return await cls.get(
             f"/foodchat/sessions/{session_id}/messages",
-            params=cls._optional_limit_params(limit),
+            params=params,
         )
 
     @classmethod
-    async def get_meal_plans(cls, session_id: str):
+    async def get_meal_plans(cls, session_id: str, member_id: str):
         """Get all daily meal plan versions in a session."""
-        return await cls.get(f"/foodchat/sessions/{session_id}/meal-plans")
+        return await cls.get(
+            f"/foodchat/sessions/{session_id}/meal-plans",
+            params=cls._member_params(member_id),
+        )
 
     @classmethod
     async def get_current_meal_plan(cls, session_id: str, member_id: str):
@@ -320,26 +326,32 @@ class FoodChat:
         )
 
     @classmethod
-    async def send_weekly_message(cls, session_id: str, content: str):
+    async def send_weekly_message(cls, session_id: str, member_id: str, content: str):
         """Send a message and get a weekly meal plan response."""
         return await cls.post(
             f"/foodchat/sessions/{session_id}/weekly",
             json=cls._message_payload(content),
+            params=cls._member_params(member_id),
             timeout=cls._extra_long_timeout(),
         )
 
     @classmethod
-    async def get_weekly_messages(cls, session_id: str, limit: Optional[int] = None):
+    async def get_weekly_messages(cls, session_id: str, member_id: str, limit: Optional[int] = None):
         """Get weekly message history for a session."""
+        params = cls._member_params(member_id)
+        params.update(cls._optional_limit_params(limit) or {})
         return await cls.get(
             f"/foodchat/sessions/{session_id}/weekly",
-            params=cls._optional_limit_params(limit),
+            params=params,
         )
 
     @classmethod
-    async def get_weekly_meal_plans(cls, session_id: str):
+    async def get_weekly_meal_plans(cls, session_id: str, member_id: str):
         """Get all weekly meal plan versions in a session."""
-        return await cls.get(f"/foodchat/sessions/{session_id}/weekly-meal-plans")
+        return await cls.get(
+            f"/foodchat/sessions/{session_id}/weekly-meal-plans",
+            params=cls._member_params(member_id),
+        )
 
     @classmethod
     async def get_current_weekly_meal_plan(cls, session_id: str, member_id: str):

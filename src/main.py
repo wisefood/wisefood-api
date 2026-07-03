@@ -1,3 +1,4 @@
+import asyncio
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,6 +69,27 @@ class Config:
         self.settings["KEYCLOAK_CLIENT_SECRET"] = os.getenv(
             "KEYCLOAK_CLIENT_SECRET", "secret"
         )
+        self.settings["KEYCLOAK_POOL_SIZE"] = int(os.getenv("KEYCLOAK_POOL_SIZE", 5))
+        self.settings["KEYCLOAK_AUDIENCES"] = [
+            aud.strip()
+            for aud in os.getenv(
+                "KEYCLOAK_AUDIENCES", "master-realm,account"
+            ).split(",")
+            if aud.strip()
+        ]
+        # Ephemeral guest access. Guests are real Keycloak users prefixed
+        # 'guest-' carrying the 'guest' realm role and an expiry attribute;
+        # the reaper deletes them (and their household) after GUEST_TTL_SECONDS.
+        self.settings["GUEST_ENABLED"] = (
+            os.getenv("GUEST_ENABLED", "true").lower() == "true"
+        )
+        self.settings["GUEST_TTL_SECONDS"] = int(
+            os.getenv("GUEST_TTL_SECONDS", 24 * 3600)
+        )
+        self.settings["GUEST_MAX_ACTIVE"] = int(os.getenv("GUEST_MAX_ACTIVE", 200))
+        self.settings["GUEST_REAPER_INTERVAL_SECONDS"] = int(
+            os.getenv("GUEST_REAPER_INTERVAL_SECONDS", 600)
+        )
         self.settings["CACHE_ENABLED"] = (
             os.getenv("CACHE_ENABLED", "false").lower() == "true"
         )
@@ -104,6 +126,21 @@ config.setup()
 logsys.configure()
 
 
+async def _guest_reaper_loop():
+    """Periodically delete expired guest accounts and their data."""
+    import guests
+
+    interval = config.settings["GUEST_REAPER_INTERVAL_SECONDS"]
+    while True:
+        try:
+            reaped = await guests.reap_expired_guests()
+            if reaped:
+                logger.info("Guest reaper: removed %d expired guest(s)", reaped)
+        except Exception:
+            logger.warning("Guest reaper iteration failed", exc_info=True)
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
@@ -114,10 +151,21 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("SELECT 1"))
     logger.info("Database connection OK")
 
+    reaper_task = None
+    if config.settings["GUEST_ENABLED"]:
+        reaper_task = asyncio.create_task(_guest_reaper_loop())
+        logger.info(
+            "Guest access enabled (TTL %ss, max %s active) — reaper running",
+            config.settings["GUEST_TTL_SECONDS"],
+            config.settings["GUEST_MAX_ACTIVE"],
+        )
+
     # yield control to the application runtime
     yield
 
     # --- SHUTDOWN ---
+    if reaper_task:
+        reaper_task.cancel()
     logger.info("App shutdown: closing DB connections")
     from backend.postgres import PostgresConnectionSingleton
     await PostgresConnectionSingleton.close()

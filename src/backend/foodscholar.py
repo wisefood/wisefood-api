@@ -91,11 +91,14 @@ class FoodScholar:
 
     @classmethod
     async def get_user_sessions(cls, user_id: str):
-        return await cls.get(f"/user/{user_id}/sessions")
+        return await cls.get(f"/api/v1/sessions/users/{user_id}")
 
     @classmethod
     async def get_session_history(cls, user_id: str, session_id: str):
-        return await cls.get(f"/user/{user_id}/session/{session_id}/history")
+        return await cls.get(
+            f"/api/v1/sessions/{session_id}/history",
+            params={"user_id": user_id},
+        )
 
     @classmethod
     async def create_session(cls, user: dict, member_id: Optional[str] = None):
@@ -124,7 +127,7 @@ class FoodScholar:
             "user_id": user["sub"],
             "max_history": 20,
         }
-        return await FOODSCHOLAR.post("/start", json=spec)
+        return await FOODSCHOLAR.post("/api/v1/sessions/start", json=spec)
 
     @classmethod
     async def chat_message(cls, session_id: str, user: dict, message: str):
@@ -133,7 +136,7 @@ class FoodScholar:
             "user_id": user["sub"],
             "message": message,
         }
-        return await FOODSCHOLAR.post("/chat", json=spec)
+        return await FOODSCHOLAR.post("/api/v1/sessions/chat", json=spec)
 
 
     @classmethod

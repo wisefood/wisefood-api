@@ -199,6 +199,27 @@ def is_admin(request: Request) -> bool:
             return False
     return False
 
+def is_guest(request: Request) -> bool:
+    """
+    Checks if the current user is an ephemeral guest based on the access token
+    in the request headers.
+
+    Args:
+        request (Request): The incoming HTTP request.
+    Returns:
+        bool: True if the user is a guest, otherwise False.
+    """
+    token = current_token(request)
+    if token:
+        try:
+            introspect_response = introspect_token(token)
+            roles = introspect_response.get("realm_access", {}).get("roles", [])
+            return "guest" in roles
+        except AuthenticationError:
+            return False
+    return False
+
+
 def is_agent(request: Request) -> bool:
     """
     Checks if the current user is an agent based on the access token in the request headers.

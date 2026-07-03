@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from routers.generic import render
 from auth import auth
+from budget import ip_rate_limit
 from schemas import LoginSchema, MTMSchema
 import kutils
 from exceptions import AuthenticationError
@@ -59,3 +60,22 @@ def login(request: Request, creds: MTMSchema):
     return kutils.get_client_token(
         client_id=creds.client_id, client_secret=creds.client_secret
     )
+
+
+@router.post(
+    "/guest",
+    dependencies=[Depends(ip_rate_limit("guest_create", limit=5, window_seconds=3600))],
+)
+@render()
+async def guest_login(request: Request):
+    """
+    Create an ephemeral guest account and return its token.
+
+    The guest is a real (short-lived) Keycloak user with the 'guest' realm
+    role and a pre-provisioned household + member, so the rest of the
+    platform treats it like any other isolated user. Guests and all their
+    data are deleted automatically after GUEST_TTL_SECONDS.
+    """
+    import guests
+
+    return await guests.create_guest()

@@ -13,6 +13,7 @@ from schemas import (
 )
 import kutils
 from backend.foodscholar import FOODSCHOLAR
+from budget import deny_guests, guest_budget
 from api.v1.households import HOUSEHOLD
 from api.v1.household_members import HOUSEHOLD_MEMBER
 from exceptions import AuthorizationError
@@ -62,7 +63,10 @@ async def session_history(request: Request, session_id: str):
     return await FOODSCHOLAR.get_session_history(user["sub"], session_id)
 
 
-@router.post("/sessions", dependencies=[Depends(auth())])
+@router.post(
+    "/sessions",
+    dependencies=[Depends(auth()), Depends(guest_budget("sessions"))],
+)
 @render()
 async def create_session(request: Request, member_id: Optional[str] = None):
     user = kutils.current_user(request)
@@ -71,7 +75,10 @@ async def create_session(request: Request, member_id: Optional[str] = None):
     return await FOODSCHOLAR.create_session(user, member_id)
 
 
-@router.post("/chat/{session_id}", dependencies=[Depends(auth())])
+@router.post(
+    "/chat/{session_id}",
+    dependencies=[Depends(auth()), Depends(guest_budget("chat"))],
+)
 @render()
 async def chat(request: Request, session_id: str, body: ChatRequest):
     message = body.message
@@ -79,7 +86,10 @@ async def chat(request: Request, session_id: str, body: ChatRequest):
     return await FOODSCHOLAR.chat_message(session_id, user, message)
 
 
-@router.post("/search/summarize", dependencies=[Depends(auth())])
+@router.post(
+    "/search/summarize",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
 @render()
 async def search_summarize(request: Request, body: SummarizeRequest):
     return await FOODSCHOLAR.get_search_summary(
@@ -90,7 +100,10 @@ async def search_summarize(request: Request, body: SummarizeRequest):
         expertise_level=body.expertise_level
     )
 
-@router.post("/enrich/article", dependencies=[Depends(auth())])
+@router.post(
+    "/enrich/article",
+    dependencies=[Depends(auth()), Depends(deny_guests)],
+)
 @render()
 async def enrich_article(request: Request, body: ArticleInput):
     return await FOODSCHOLAR.enrich_article(
@@ -101,7 +114,10 @@ async def enrich_article(request: Request, body: ArticleInput):
     )
 
 
-@router.post("/qa/ask", dependencies=[Depends(auth())])
+@router.post(
+    "/qa/ask",
+    dependencies=[Depends(auth()), Depends(guest_budget("qa"))],
+)
 @render()
 async def ask_question(request: Request, body: QARequest):
     user = kutils.current_user(request)
@@ -143,7 +159,10 @@ async def get_guideline_storage(request: Request, artifact_uuid: str):
     return await FOODSCHOLAR.get_guideline_storage(artifact_uuid)
 
 
-@router.post("/guidelines/extract/{artifact_uuid}", dependencies=[Depends(auth())])
+@router.post(
+    "/guidelines/extract/{artifact_uuid}",
+    dependencies=[Depends(auth()), Depends(deny_guests)],
+)
 @render()
 async def enqueue_guideline_extraction(request: Request, artifact_uuid: str):
     return await FOODSCHOLAR.enqueue_guideline_extraction(artifact_uuid)
@@ -155,7 +174,10 @@ async def get_guideline_extraction_status(request: Request, artifact_uuid: str):
     return await FOODSCHOLAR.get_guideline_extraction_status(artifact_uuid)
 
 
-@router.post("/guidelines/import/{artifact_uuid}", dependencies=[Depends(auth())])
+@router.post(
+    "/guidelines/import/{artifact_uuid}",
+    dependencies=[Depends(auth()), Depends(deny_guests)],
+)
 @render()
 async def import_guidelines(
     request: Request, artifact_uuid: str, body: GuidelineImportRequest
