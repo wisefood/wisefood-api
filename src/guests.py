@@ -23,7 +23,7 @@ from typing import Any, Dict, List
 
 import kutils
 from backend.keycloak import KEYCLOAK_ADMIN_CLIENT
-from exceptions import AuthorizationError, ConflictError
+from exceptions import AuthenticationError, AuthorizationError, ConflictError
 from main import config
 
 logger = logging.getLogger(__name__)
@@ -70,12 +70,17 @@ async def create_guest() -> Dict[str, Any]:
     ttl = config.settings["GUEST_TTL_SECONDS"]
     expires_at = int(time.time()) + ttl
     username = GUEST_USERNAME_PREFIX + uuid.uuid4().hex[:12]
+    # The realm requires an email on every user (registrationEmailAsUsername),
+    # so guests get a synthetic, never-delivered address. emailVerified=True
+    # prevents any verification mail from being triggered.
+    email = f"{username}@{config.settings['GUEST_EMAIL_DOMAIN']}"
     password = _generate_password()
 
     admin = KEYCLOAK_ADMIN_CLIENT()
     user_id = admin.create_user(
         {
             "username": username,
+            "email": email,
             "firstName": "Guest",
             "lastName": "User",
             "enabled": True,
@@ -104,7 +109,12 @@ async def create_guest() -> Dict[str, Any]:
             creator={"sub": user_id},
         )
 
-        token = kutils.get_token(username, password)
+        # With registrationEmailAsUsername the realm may have stored the
+        # email as the username, so fall back to it for the token grant.
+        try:
+            token = kutils.get_token(username, password)
+        except AuthenticationError:
+            token = kutils.get_token(email, password)
     except Exception:
         # Never leave a half-provisioned guest behind.
         logger.exception("Guest provisioning failed — rolling back %s", username)

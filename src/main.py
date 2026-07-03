@@ -87,6 +87,11 @@ class Config:
             os.getenv("GUEST_TTL_SECONDS", 24 * 3600)
         )
         self.settings["GUEST_MAX_ACTIVE"] = int(os.getenv("GUEST_MAX_ACTIVE", 200))
+        # Synthetic, never-delivered address domain for guest accounts —
+        # the realm requires an email on every user.
+        self.settings["GUEST_EMAIL_DOMAIN"] = os.getenv(
+            "GUEST_EMAIL_DOMAIN", "guests.wisefood.gr"
+        )
         self.settings["GUEST_REAPER_INTERVAL_SECONDS"] = int(
             os.getenv("GUEST_REAPER_INTERVAL_SECONDS", 600)
         )
