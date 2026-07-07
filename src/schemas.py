@@ -917,11 +917,23 @@ class FoodChatSessionResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class FoodChatMatchReason(BaseModel):
+    """Why a recipe was matched to the household (e.g. preference/constraint hit)."""
+
+    kind: str
+    label: str
+
+    model_config = ConfigDict(extra="allow")
+
+
 class FoodChatMealCourseResponse(BaseModel):
     recipe_id: str
     title: str
     ingredients: str
     directions: str
+    nutrition: Optional[Dict[str, Any]] = None
+    image_url: Optional[str] = None
+    match_reasons: List[FoodChatMatchReason] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="allow")
 
@@ -943,6 +955,8 @@ class FoodChatMealPlanResponse(BaseModel):
     diversity_llm_reasoning: Optional[str] = None
     guideline_adherence_score: Optional[int] = None
     guideline_adherence_reasoning: Optional[str] = None
+    constraints_applied: List[Dict[str, Any]] = Field(default_factory=list)
+    personalization_summary: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -1001,6 +1015,8 @@ class FoodChatChatTurnResponse(BaseModel):
     # Set on nutrition_question turns answered via FoodScholar
     attribution: Optional[FoodChatAttribution] = None
     memory_suggestions: Optional[List[FoodChatMemorySuggestion]] = None
+    # Slot-edit proof — {meal_type, day, old{title,kcal}, new{...}, directive, verified}
+    changed_slots: Optional[List[Dict[str, Any]]] = None
 
     model_config = ConfigDict(extra="allow")
 
