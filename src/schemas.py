@@ -859,6 +859,27 @@ class FoodChatWeeklyMealPlanResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class FoodChatCitation(BaseModel):
+    title: str
+    source_type: str            # "article" | "guideline"
+    url: Optional[str] = None
+    label: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatAttribution(BaseModel):
+    """Provenance of a chat answer delegated to another WiseFood app
+    (currently FoodScholar). ``learn_more_url`` is a UI-relative path."""
+
+    source: str                 # "foodscholar"
+    confidence: Optional[str] = None
+    citations: List[FoodChatCitation] = Field(default_factory=list)
+    learn_more_url: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
 class FoodChatChatTurnResponse(BaseModel):
     role: str
     content: str
@@ -869,6 +890,8 @@ class FoodChatChatTurnResponse(BaseModel):
     at_message_limit: bool = False
     plan_version: Optional[int] = None
     plan_parent_id: Optional[str] = None
+    # Set on nutrition_question turns answered via FoodScholar
+    attribution: Optional[FoodChatAttribution] = None
 
     model_config = ConfigDict(extra="allow")
 

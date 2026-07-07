@@ -3,6 +3,7 @@ import httpx
 from typing import Any, Dict, Optional
 from main import config
 from api.v1.households import HOUSEHOLD
+from api.v1.household_members import HOUSEHOLD_MEMBER
 import logging
 
 logger = logging.getLogger(__name__)
@@ -105,9 +106,12 @@ class FoodScholar:
 
         context = "Name: " + user.get("name", "Anonymous")
         if member_id:
+            # Member/profile live on HOUSEHOLD_MEMBER — calling them on
+            # HOUSEHOLD raised AttributeError and 500'd every session-create
+            # that carried a member_id (fixed in M1).
             household = await HOUSEHOLD.get_by_owner(user["sub"])
-            member = await HOUSEHOLD.get_member(member_id)
-            member_profile = await HOUSEHOLD.get_member_profile(member_id)
+            member = await HOUSEHOLD_MEMBER.get(member_id)
+            member_profile = await HOUSEHOLD_MEMBER.get_member_profile(member_id)
             if member_profile:
                 context += f"Name: {member.get('name', 'Unknown member')}"
                 context += f", Region (ISO-3166-1 alpha-2): {household.get('region', 'Unknown region')}"
