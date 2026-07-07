@@ -106,3 +106,22 @@ CREATE TABLE IF NOT EXISTS wisefood.member_favorite (
     PRIMARY KEY (member_id, recipe_id),
     FOREIGN KEY (member_id) REFERENCES wisefood.household_member(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+-- GDPR-style user consent ledger. user_id is the Keycloak token 'sub' claim
+-- (a USER, not a household member). Append-only: every acceptance inserts a
+-- new row; the latest row per (user_id, consent_type) is the effective
+-- consent. Consent covers cookies and the processing of personal information
+-- solely for the provision of the service.
+-- NOTE: this file only runs on database initialization (entrypoint.sh init-db /
+-- INITIALIZE_DB=1); on already-initialized deployments apply these statements
+-- manually (they are IF NOT EXISTS, so re-running init-db is also safe).
+CREATE TABLE IF NOT EXISTS wisefood.user_consent (
+    id BIGSERIAL PRIMARY KEY,
+    user_id VARCHAR(100) NOT NULL,
+    consent_type VARCHAR(64) NOT NULL DEFAULT 'service_data_processing',
+    version VARCHAR(16) NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(64)
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_consent_user_id ON wisefood.user_consent(user_id);

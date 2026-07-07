@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -246,9 +246,16 @@ class FoodChat:
         return await cls.get("/foodchat/health")
 
     @classmethod
-    async def create_session(cls, member_id: str):
+    async def create_session(
+        cls,
+        member_id: str,
+        cooking_for: Optional[List[str]] = None,
+    ):
         """Create a new chat session for a household member."""
-        return await cls.post("/foodchat/sessions", json={"member_id": member_id})
+        payload: Dict[str, Any] = {"member_id": member_id}
+        if cooking_for is not None:
+            payload["cooking_for"] = cooking_for
+        return await cls.post("/foodchat/sessions", json=payload)
 
     @classmethod
     async def get_session(cls, session_id: str, member_id: str):
@@ -363,6 +370,40 @@ class FoodChat:
                 rating=rating,
                 comment=comment,
             ),
+        )
+
+    @classmethod
+    async def submit_memory_decision(
+        cls,
+        session_id: str,
+        member_id: str,
+        decision: str,
+        suggestion: Dict[str, Any],
+    ):
+        """Accept or decline a memory suggestion for a session."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/memory",
+            json={
+                "member_id": member_id,
+                "decision": decision,
+                "suggestion": suggestion,
+            },
+        )
+
+    @classmethod
+    async def update_diners(
+        cls,
+        session_id: str,
+        member_id: str,
+        cooking_for: List[str],
+    ):
+        """Update the diners (cooking_for) of a session."""
+        return await cls.put(
+            f"/foodchat/sessions/{session_id}/diners",
+            json={
+                "member_id": member_id,
+                "cooking_for": cooking_for,
+            },
         )
 
 

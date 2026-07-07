@@ -206,6 +206,7 @@ from routers.foodchat import router as foodchat_router
 from routers.meal_plans import router as meal_plans_router
 from routers.images import router as images_router
 from routers.observability import router as observability_router
+from routers.users import router as users_router
 
 api.include_router(households_router)
 api.include_router(household_members_router)
@@ -216,6 +217,7 @@ api.include_router(foodchat_router)
 api.include_router(meal_plans_router)
 api.include_router(images_router)
 api.include_router(observability_router)
+api.include_router(users_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration

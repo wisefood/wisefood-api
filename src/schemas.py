@@ -7,7 +7,7 @@ Pydantic schemas for API request/response validation (no forward refs)
 
 from datetime import date as DateType, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
@@ -167,6 +167,60 @@ class MemberFavoriteResponse(BaseModel):
 
 class MemberFavoriteDeleteResponse(BaseModel):
     deleted: bool = Field(..., description="Whether a favorite was removed")
+
+
+# ---------- User Consent Schemas ----------
+class UserConsentCreate(BaseModel):
+    """
+    Body for recording a consent acceptance for the current Keycloak user.
+
+    The user_id is never taken from the body — it always comes from the
+    authenticated token's `sub` claim. The recorded consent covers cookies
+    and the processing of personal information solely for the provision of
+    the service (purpose limitation).
+    """
+
+    consent_type: str = Field(
+        "service_data_processing",
+        min_length=1,
+        max_length=64,
+        description="Kind of consent being granted",
+    )
+    version: str = Field(
+        ...,
+        min_length=1,
+        max_length=16,
+        description="Version of the consent text the user accepted (e.g. '1.0')",
+    )
+
+
+class UserConsentStatus(BaseModel):
+    """
+    Latest consent state for a user and consent type.
+
+    granted=False (with null version/granted_at) means the user has never
+    accepted this consent type. Consent covers processing solely for the
+    provision of the service.
+    """
+
+    granted: bool = Field(..., description="Whether the user has recorded this consent")
+    consent_type: str = Field(..., description="Kind of consent")
+    version: Optional[str] = Field(None, description="Accepted consent text version, if any")
+    granted_at: Optional[datetime] = Field(None, description="When consent was last granted, if ever")
+
+
+class UserConsentRecord(BaseModel):
+    """
+    A stored consent acceptance (one append-only ledger row). Consent covers
+    processing solely for the provision of the service.
+    """
+
+    consent_type: str = Field(..., description="Kind of consent")
+    version: str = Field(..., description="Accepted consent text version")
+    granted_at: datetime = Field(..., description="When the acceptance was recorded")
+    ip_address: Optional[str] = Field(None, description="Client IP at acceptance time")
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------- Household Schemas ----------
@@ -790,6 +844,10 @@ class ImageUploadResponse(BaseModel):
 class FoodChatCreateSessionRequest(BaseModel):
     """Request payload for creating a FoodChat session."""
     member_id: str = Field(..., description="Household member ID to create session for")
+    cooking_for: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of household member IDs the session is cooking for",
+    )
 
 
 class FoodChatChatRequest(BaseModel):
@@ -798,6 +856,44 @@ class FoodChatChatRequest(BaseModel):
     member_id: str = Field(
         ...,
         description="Household member ID that owns the FoodChat session",
+    )
+
+
+class FoodChatMemorySuggestion(BaseModel):
+    """A memory suggestion surfaced by FoodChat during a chat turn."""
+    id: str
+    kind: str
+    value: str
+    statement: str
+
+    model_config = ConfigDict(extra="allow")
+
+
+class FoodChatMemoryDecisionRequest(BaseModel):
+    """Request payload for accepting or declining a memory suggestion."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    decision: Literal["accept", "decline"] = Field(
+        ...,
+        description="Whether the member accepts or declines the memory suggestion",
+    )
+    suggestion: FoodChatMemorySuggestion = Field(
+        ...,
+        description="The memory suggestion being decided on",
+    )
+
+
+class FoodChatUpdateDinersRequest(BaseModel):
+    """Request payload for updating the diners of a FoodChat session."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    cooking_for: List[str] = Field(
+        ...,
+        description="Household member IDs the session is cooking for",
     )
 
 
@@ -904,6 +1000,7 @@ class FoodChatChatTurnResponse(BaseModel):
     plan_parent_id: Optional[str] = None
     # Set on nutrition_question turns answered via FoodScholar
     attribution: Optional[FoodChatAttribution] = None
+    memory_suggestions: Optional[List[FoodChatMemorySuggestion]] = None
 
     model_config = ConfigDict(extra="allow")
 

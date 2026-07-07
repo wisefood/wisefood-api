@@ -9,6 +9,7 @@ from uuid import uuid4
 import enum
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     String,
     Date,
@@ -258,6 +259,45 @@ class MemberFavorite(Base):
         return {
             "recipe_id": self.recipe_id,
             "created_at": self.created_at.isoformat(),
+        }
+
+
+class UserConsent(Base):
+    """
+    GDPR-style consent record for a Keycloak USER (user_id is the token
+    ``sub`` claim), NOT a household member.
+
+    Append-only ledger: every acceptance inserts a new row and rows are never
+    updated or deleted, so the trail stays auditable. The latest row per
+    (user_id, consent_type) is the currently effective consent.
+
+    Legal scope: the recorded consent covers cookies and the processing of
+    personal information solely for the provision of the service
+    (purpose limitation).
+    """
+
+    __tablename__ = "user_consent"
+    __table_args__ = {"schema": "wisefood"}
+
+    id = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = mapped_column(String(100), nullable=False, index=True)
+    consent_type = mapped_column(
+        String(64), nullable=False, default="service_data_processing"
+    )
+    version = mapped_column(String(16), nullable=False)
+    granted_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    ip_address = mapped_column(String(64), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "consent_type": self.consent_type,
+            "version": self.version,
+            "granted_at": self.granted_at.isoformat(),
+            "ip_address": self.ip_address,
         }
 
 

@@ -13,6 +13,8 @@ from schemas import (
     FoodChatChatRequest,
     FoodChatCreateSessionRequest,
     FoodChatFeedbackRequest,
+    FoodChatMemoryDecisionRequest,
+    FoodChatUpdateDinersRequest,
 )
 
 router = APIRouter(prefix="/api/v1/foodchat", tags=["Food Chat Operations"])
@@ -42,6 +44,21 @@ async def verify_member_access(request: Request, member_id: str):
     return member, household
 
 
+async def verify_cooking_for_household(member: dict, cooking_for: list[str]):
+    """
+    Verify that every member ID in cooking_for belongs to the same
+    household as the given (already authorized) member.
+    """
+    for diner_id in cooking_for:
+        if diner_id == member["id"]:
+            continue
+        diner = await HOUSEHOLD_MEMBER.aget_entity(diner_id)
+        if diner["household_id"] != member["household_id"]:
+            raise AuthorizationError(
+                detail="All cooking_for members must belong to the same household"
+            )
+
+
 @router.get("/status", dependencies=[Depends(auth())])
 @render()
 async def status(request: Request):
@@ -56,8 +73,13 @@ async def status(request: Request):
 @render()
 async def create_session(request: Request, payload: FoodChatCreateSessionRequest):
     """Create a new chat session for a household member."""
-    await verify_member_access(request, payload.member_id)
-    return await FOODCHAT.create_session(member_id=payload.member_id)
+    member, _ = await verify_member_access(request, payload.member_id)
+    if payload.cooking_for is not None:
+        await verify_cooking_for_household(member, payload.cooking_for)
+    return await FOODCHAT.create_session(
+        member_id=payload.member_id,
+        cooking_for=payload.cooking_for,
+    )
 
 
 @router.get("/sessions/{session_id}", dependencies=[Depends(auth())])
@@ -221,6 +243,46 @@ async def get_conversation(
         member_id=member_id,
         before_id=before_id,
         limit=limit,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/memory",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def submit_memory_decision(
+    request: Request,
+    session_id: str,
+    payload: FoodChatMemoryDecisionRequest,
+):
+    """Accept or decline a memory suggestion for a session."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.submit_memory_decision(
+        session_id=session_id,
+        member_id=payload.member_id,
+        decision=payload.decision,
+        suggestion=payload.suggestion.model_dump(),
+    )
+
+
+@router.put(
+    "/sessions/{session_id}/diners",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def update_diners(
+    request: Request,
+    session_id: str,
+    payload: FoodChatUpdateDinersRequest,
+):
+    """Update the diners (cooking_for) of a session."""
+    member, _ = await verify_member_access(request, payload.member_id)
+    await verify_cooking_for_household(member, payload.cooking_for)
+    return await FOODCHAT.update_diners(
+        session_id=session_id,
+        member_id=payload.member_id,
+        cooking_for=payload.cooking_for,
     )
 
 
