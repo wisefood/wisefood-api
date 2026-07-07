@@ -780,13 +780,9 @@ class FoodChatCreateSessionRequest(BaseModel):
     member_id: str = Field(..., description="Household member ID to create session for")
 
 
-class FoodChatMessageRequest(BaseModel):
-    """Request payload for sending a message in a FoodChat session."""
-    content: str = Field(..., min_length=1, description="Message content to send")
-
-
-class FoodChatChatRequest(FoodChatMessageRequest):
+class FoodChatChatRequest(BaseModel):
     """Request payload for the unified FoodChat conversation endpoint."""
+    content: str = Field(..., min_length=1, description="Message content to send")
     member_id: str = Field(
         ...,
         description="Household member ID that owns the FoodChat session",
@@ -859,31 +855,6 @@ class FoodChatWeeklyMealPlanResponse(BaseModel):
     version: int
     parent_id: Optional[str] = None
     entries: List[FoodChatWeeklyMealPlanEntryResponse] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="allow")
-
-
-class FoodChatMessageHistoryItem(BaseModel):
-    role: str
-    content: str
-    timestamp: datetime
-
-    model_config = ConfigDict(extra="allow")
-
-
-class FoodChatMessageResponse(BaseModel):
-    role: str
-    content: str
-    needs_clarification: bool = False
-    meal_plan: Optional[FoodChatMealPlanResponse] = None
-
-    model_config = ConfigDict(extra="allow")
-
-
-class FoodChatWeeklyMessageResponse(BaseModel):
-    role: str
-    content: str
-    weekly_meal_plan: Optional[FoodChatWeeklyMealPlanResponse] = None
 
     model_config = ConfigDict(extra="allow")
 

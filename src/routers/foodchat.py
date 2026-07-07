@@ -13,7 +13,6 @@ from schemas import (
     FoodChatChatRequest,
     FoodChatCreateSessionRequest,
     FoodChatFeedbackRequest,
-    FoodChatMessageRequest,
 )
 
 router = APIRouter(prefix="/api/v1/foodchat", tags=["Food Chat Operations"])
@@ -85,43 +84,6 @@ async def delete_session(
     return await FOODCHAT.delete_session(session_id=session_id, member_id=member_id)
 
 
-@router.post(
-    "/sessions/{session_id}/messages",
-    dependencies=[Depends(auth()), Depends(guest_budget("chat"))],
-)
-@render()
-async def send_message(
-    request: Request,
-    session_id: str,
-    payload: FoodChatMessageRequest,
-    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
-):
-    """Send a message through the legacy daily chat endpoint."""
-    await verify_member_access(request, member_id)
-    return await FOODCHAT.send_message(
-        session_id=session_id,
-        member_id=member_id,
-        content=payload.content,
-    )
-
-
-@router.get("/sessions/{session_id}/messages", dependencies=[Depends(auth())])
-@render()
-async def get_messages(
-    request: Request,
-    session_id: str,
-    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
-    limit: Optional[int] = Query(default=None, ge=1),
-):
-    """Get message history for a session."""
-    await verify_member_access(request, member_id)
-    return await FOODCHAT.get_messages(
-        session_id=session_id,
-        member_id=member_id,
-        limit=limit,
-    )
-
-
 @router.get("/sessions/{session_id}/meal-plans", dependencies=[Depends(auth())])
 @render()
 async def get_meal_plans(
@@ -161,43 +123,6 @@ async def get_meal_plan_history(
     return await FOODCHAT.get_meal_plan_history(
         session_id=session_id,
         member_id=member_id,
-    )
-
-
-@router.post(
-    "/sessions/{session_id}/weekly",
-    dependencies=[Depends(auth()), Depends(guest_budget("chat"))],
-)
-@render()
-async def send_weekly_message(
-    request: Request,
-    session_id: str,
-    payload: FoodChatMessageRequest,
-    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
-):
-    """Send a message through the legacy weekly meal planning endpoint."""
-    await verify_member_access(request, member_id)
-    return await FOODCHAT.send_weekly_message(
-        session_id=session_id,
-        member_id=member_id,
-        content=payload.content,
-    )
-
-
-@router.get("/sessions/{session_id}/weekly", dependencies=[Depends(auth())])
-@render()
-async def get_weekly_messages(
-    request: Request,
-    session_id: str,
-    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
-    limit: Optional[int] = Query(default=None, ge=1),
-):
-    """Get weekly message history for a session."""
-    await verify_member_access(request, member_id)
-    return await FOODCHAT.get_weekly_messages(
-        session_id=session_id,
-        member_id=member_id,
-        limit=limit,
     )
 
 

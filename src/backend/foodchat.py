@@ -195,13 +195,6 @@ class FoodChat:
         return {"member_id": member_id}
 
     @classmethod
-    def _optional_limit_params(cls, limit: Optional[int]) -> Optional[Dict[str, Any]]:
-        params: Dict[str, Any] = {}
-        if limit is not None:
-            params["limit"] = limit
-        return params or None
-
-    @classmethod
     def _conversation_params(
         cls,
         member_id: str,
@@ -215,10 +208,6 @@ class FoodChat:
         if before_id is not None:
             params["before_id"] = before_id
         return params
-
-    @classmethod
-    def _message_payload(cls, content: str) -> Dict[str, Any]:
-        return {"content": content}
 
     @classmethod
     def _chat_payload(cls, content: str, member_id: str) -> Dict[str, Any]:
@@ -241,10 +230,6 @@ class FoodChat:
         if comment is not None:
             payload["comment"] = comment
         return payload
-
-    @classmethod
-    def _long_timeout(cls) -> float:
-        return 60.0
 
     @classmethod
     def _extra_long_timeout(cls) -> float:
@@ -282,26 +267,6 @@ class FoodChat:
         )
 
     @classmethod
-    async def send_message(cls, session_id: str, member_id: str, content: str):
-        """Send a message and get a response. Uses 60s timeout for meal plan generation."""
-        return await cls.post(
-            f"/foodchat/sessions/{session_id}/messages",
-            json=cls._message_payload(content),
-            params=cls._member_params(member_id),
-            timeout=cls._long_timeout(),
-        )
-
-    @classmethod
-    async def get_messages(cls, session_id: str, member_id: str, limit: Optional[int] = None):
-        """Get message history for a session."""
-        params = cls._member_params(member_id)
-        params.update(cls._optional_limit_params(limit) or {})
-        return await cls.get(
-            f"/foodchat/sessions/{session_id}/messages",
-            params=params,
-        )
-
-    @classmethod
     async def get_meal_plans(cls, session_id: str, member_id: str):
         """Get all daily meal plan versions in a session."""
         return await cls.get(
@@ -323,26 +288,6 @@ class FoodChat:
         return await cls.get(
             f"/foodchat/sessions/{session_id}/meal-plans/history",
             params=cls._member_params(member_id),
-        )
-
-    @classmethod
-    async def send_weekly_message(cls, session_id: str, member_id: str, content: str):
-        """Send a message and get a weekly meal plan response."""
-        return await cls.post(
-            f"/foodchat/sessions/{session_id}/weekly",
-            json=cls._message_payload(content),
-            params=cls._member_params(member_id),
-            timeout=cls._extra_long_timeout(),
-        )
-
-    @classmethod
-    async def get_weekly_messages(cls, session_id: str, member_id: str, limit: Optional[int] = None):
-        """Get weekly message history for a session."""
-        params = cls._member_params(member_id)
-        params.update(cls._optional_limit_params(limit) or {})
-        return await cls.get(
-            f"/foodchat/sessions/{session_id}/weekly",
-            params=params,
         )
 
     @classmethod
