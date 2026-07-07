@@ -157,6 +157,18 @@ class HouseholdMemberResponse(HouseholdMemberBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ---------- Member Favorite Schemas ----------
+class MemberFavoriteResponse(BaseModel):
+    recipe_id: str = Field(..., min_length=1, max_length=128, description="Opaque RecipeWrangler recipe id")
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemberFavoriteDeleteResponse(BaseModel):
+    deleted: bool = Field(..., description="Whether a favorite was removed")
+
+
 # ---------- Household Schemas ----------
 class HouseholdBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Household name")

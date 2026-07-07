@@ -9,7 +9,7 @@ from sqlalchemy import select, delete
 from uuid import uuid4
 
 from entity import Entity
-from sql import HouseholdMember, HouseholdMemberProfile, Household, AgeGroup, DietaryGroup
+from sql import HouseholdMember, HouseholdMemberProfile, Household, MemberFavorite, AgeGroup, DietaryGroup
 from exceptions import NotFoundError, ConflictError
 from schemas import HouseholdMemberResponse, HouseholdMemberCreate, HouseholdMemberUpdate
 from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
@@ -423,6 +423,80 @@ class HouseholdMemberEntity(Entity):
             result = await db.execute(
                 delete(HouseholdMemberProfile).where(
                     HouseholdMemberProfile.household_member_id == member_id
+                )
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    # ========== Member Favorite Operations ==========
+
+    async def list_favorites(
+        self,
+        member_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        List a member's favorite recipes, newest first.
+
+        :param member_id: The member ID
+        :return: List of favorite dictionaries
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(MemberFavorite)
+                .where(MemberFavorite.member_id == member_id)
+                .order_by(MemberFavorite.created_at.desc())
+            )
+            return [f.to_dict() for f in result.scalars().all()]
+
+    async def add_favorite(
+        self,
+        member_id: str,
+        recipe_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Add a recipe to a member's favorites (idempotent).
+
+        Re-adding an existing favorite returns the existing row unchanged.
+
+        :param member_id: The member ID
+        :param recipe_id: Opaque RecipeWrangler recipe ID
+        :return: Favorite dictionary
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(MemberFavorite).where(
+                    MemberFavorite.member_id == member_id,
+                    MemberFavorite.recipe_id == recipe_id,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                return existing.to_dict()
+
+            favorite = MemberFavorite(member_id=member_id, recipe_id=recipe_id)
+            db.add(favorite)
+            await db.flush()
+            favorite_dict = favorite.to_dict()
+            await db.commit()
+            return favorite_dict
+
+    async def remove_favorite(
+        self,
+        member_id: str,
+        recipe_id: str,
+    ) -> bool:
+        """
+        Remove a recipe from a member's favorites (idempotent).
+
+        :param member_id: The member ID
+        :param recipe_id: Opaque RecipeWrangler recipe ID
+        :return: True if a favorite was deleted, False if it did not exist
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                delete(MemberFavorite).where(
+                    MemberFavorite.member_id == member_id,
+                    MemberFavorite.recipe_id == recipe_id,
                 )
             )
             await db.commit()

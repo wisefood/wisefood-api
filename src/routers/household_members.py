@@ -3,7 +3,7 @@ Household Member management endpoints (independent entity)
 """
 
 from typing import Dict, Any
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Path, Request
 import kutils
 import logging
 from auth import auth
@@ -16,6 +16,8 @@ from schemas import (
     HouseholdMemberProfileCreate,
     HouseholdMemberProfileUpdate,
     HouseholdMemberProfileResponse,
+    MemberFavoriteResponse,
+    MemberFavoriteDeleteResponse,
 )
 from api.v1.household_members import HOUSEHOLD_MEMBER
 from routers.households import verify_access
@@ -227,3 +229,64 @@ async def api_delete_member_profile(
     await HOUSEHOLD_MEMBER.delete_member_profile(member_id)
 
     return {"message": "Profile deleted successfully"}
+
+
+# ========== Household Member Favorites Endpoints ==========
+
+
+@router.get(
+    "/{member_id}/favorites",
+    dependencies=[Depends(auth())],
+    summary="List a member's favorite recipes",
+    description="List a household member's favorite recipes, newest first. User must be the household owner or admin.",
+)
+@render()
+async def api_list_member_favorites(
+    request: Request,
+    member_id: str,
+):
+    """List a member's favorite recipes, newest first. User must have access."""
+    await verify_access(request, None, member_id)
+
+    favorites = await HOUSEHOLD_MEMBER.list_favorites(member_id)
+    return [MemberFavoriteResponse(**f) for f in favorites]
+
+
+@router.put(
+    "/{member_id}/favorites/{recipe_id}",
+    dependencies=[Depends(auth())],
+    summary="Add a recipe to a member's favorites",
+    description="Idempotently add a recipe to a member's favorites. Re-adding returns the existing favorite. User must be the household owner or admin.",
+)
+@render()
+async def api_add_member_favorite(
+    request: Request,
+    member_id: str,
+    recipe_id: str = Path(..., min_length=1, max_length=128, description="Opaque RecipeWrangler recipe id"),
+):
+    """Add a recipe to a member's favorites (idempotent). User must have access."""
+    await verify_access(request, None, member_id)
+
+    favorite = await HOUSEHOLD_MEMBER.add_favorite(member_id, recipe_id)
+
+    return MemberFavoriteResponse(**favorite)
+
+
+@router.delete(
+    "/{member_id}/favorites/{recipe_id}",
+    dependencies=[Depends(auth())],
+    summary="Remove a recipe from a member's favorites",
+    description="Idempotently remove a recipe from a member's favorites. User must be the household owner or admin.",
+)
+@render()
+async def api_delete_member_favorite(
+    request: Request,
+    member_id: str,
+    recipe_id: str = Path(..., min_length=1, max_length=128, description="Opaque RecipeWrangler recipe id"),
+):
+    """Remove a recipe from a member's favorites (idempotent). User must have access."""
+    await verify_access(request, None, member_id)
+
+    deleted = await HOUSEHOLD_MEMBER.remove_favorite(member_id, recipe_id)
+
+    return MemberFavoriteDeleteResponse(deleted=deleted)

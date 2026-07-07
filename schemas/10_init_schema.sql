@@ -94,3 +94,15 @@ CREATE TABLE IF NOT EXISTS wisefood.meal_plan_member (
 
 CREATE INDEX IF NOT EXISTS ix_meal_plan_member_member_id ON wisefood.meal_plan_member(member_id);
 CREATE INDEX IF NOT EXISTS ix_meal_plan_member_meal_plan_id ON wisefood.meal_plan_member(meal_plan_id);
+
+-- Member recipe favorites (recipe_id is an opaque RecipeWrangler id).
+-- NOTE: this file only runs on database initialization (entrypoint.sh init-db /
+-- INITIALIZE_DB=1); on already-initialized deployments apply this statement
+-- manually (it is IF NOT EXISTS, so re-running init-db is also safe).
+CREATE TABLE IF NOT EXISTS wisefood.member_favorite (
+    member_id VARCHAR(100) NOT NULL,
+    recipe_id VARCHAR(128) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (member_id, recipe_id),
+    FOREIGN KEY (member_id) REFERENCES wisefood.household_member(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
