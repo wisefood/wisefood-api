@@ -1,16 +1,21 @@
 from fastapi import APIRouter, Request, Depends, Query
 from routers.generic import render
 import logging
-from auth import auth
+from auth import auth, _extract_roles
 from backend.recipewrangler import RECIPEWRANGLER
 from budget import guest_budget
+from exceptions import AuthorizationError
 from schemas import (
     RecipeProfileRequest,
     RecipeSearchRequest,
     RecipeParamSearchRequest,
+    RecipeBulkStatusRequest,
     RecipeCreateRequest,
     RecipeCreateResponse,
+    RecipeDisableByQueryRequest,
+    RecipeDisableRequest,
     RecipeRegionEnum,
+    RecipeStatusResponse,
     RecipeSubstituteRequest,
     RecipeSubstituteResponse,
     RecipeUpdateRequest,
@@ -20,6 +25,18 @@ from schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/recipewrangler", tags=["Recipe Wrangler Operations"])
+
+# Roles allowed to manage recipe status and see disabled recipes.
+_CONSOLE_ROLES = {"admin", "expert"}
+
+
+def _require_console_roles(user: dict, capability: str) -> None:
+    roles = {str(r).lower() for r in _extract_roles(user)}
+    if not (_CONSOLE_ROLES & roles):
+        raise AuthorizationError(
+            detail=f"{capability} requires one of: {sorted(_CONSOLE_ROLES)}",
+            extra={"roles": sorted(roles)},
+        )
 
 
 @router.get("/status", dependencies=[Depends(auth())])
@@ -66,7 +83,7 @@ async def get_recipe_count(request: Request):
     return await RECIPEWRANGLER.count_recipes()
 
 
-@router.get("/recipes/{recipe_id}", dependencies=[Depends(auth())])
+@router.get("/recipes/{recipe_id}")
 @render()
 async def get_recipe(
     recipe_id: str,
@@ -79,12 +96,20 @@ async def get_recipe(
         default=False,
         description="When true, return only card-level fields with no nutrition data.",
     ),
+    include_disabled: bool = Query(
+        default=False,
+        description="Console/admin only: also resolve disabled (soft-deleted) recipes.",
+    ),
+    user: dict = Depends(auth()),
 ):
     """Retrieve a recipe by id, optionally using its lightweight card representation."""
+    if include_disabled:
+        _require_console_roles(user, "include_disabled")
     return await RECIPEWRANGLER.get_recipe(
         recipe_id,
         region=region.value if region else None,
         slim=slim,
+        include_disabled=include_disabled,
     )
 
 
@@ -118,11 +143,17 @@ async def search_recipes(payload: RecipeSearchRequest, request: Request):
 
 @router.post(
     "/recipes/param_search",
-    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+    dependencies=[Depends(guest_budget("search"))],
 )
 @render()
-async def param_search_recipes(payload: RecipeParamSearchRequest, request: Request):
+async def param_search_recipes(
+    payload: RecipeParamSearchRequest,
+    request: Request,
+    user: dict = Depends(auth()),
+):
     """Run deterministic parameter-based recipe search."""
+    if payload.include_disabled:
+        _require_console_roles(user, "include_disabled")
     return await RECIPEWRANGLER.param_search_recipes(
         include_ingredients=payload.include_ingredients,
         exclude_ingredients=payload.exclude_ingredients,
@@ -135,6 +166,7 @@ async def param_search_recipes(payload: RecipeParamSearchRequest, request: Reque
         offset=payload.offset,
         sort_by=payload.sort_by,
         include_facets=payload.include_facets,
+        include_disabled=payload.include_disabled,
     )
 
 
@@ -170,3 +202,75 @@ async def substitute_recipe_ingredient(
         region=payload.region.value,
     )
     return RecipeSubstituteResponse(**substituted)
+
+
+# ---------------------------------------------------------------------------
+# Recipe soft-delete (disable/enable) — console/admin operations
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/recipes/disable",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def bulk_disable_recipes(payload: RecipeBulkStatusRequest, request: Request):
+    """Bulk disable (soft-delete) recipes by explicit IDs. Reversible."""
+    result = await RECIPEWRANGLER.bulk_disable_recipes(
+        payload.recipe_ids, reason=payload.reason
+    )
+    return RecipeStatusResponse(**result)
+
+
+@router.post(
+    "/recipes/enable",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def bulk_enable_recipes(payload: RecipeBulkStatusRequest, request: Request):
+    """Bulk re-enable previously disabled recipes by explicit IDs."""
+    result = await RECIPEWRANGLER.bulk_enable_recipes(payload.recipe_ids)
+    return RecipeStatusResponse(**result)
+
+
+@router.post(
+    "/recipes/disable-by-query",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def disable_recipes_by_query(payload: RecipeDisableByQueryRequest, request: Request):
+    """Bulk disable every recipe matching param_search filters.
+
+    Refuses an unconstrained query unless allow_unfiltered is set.
+    """
+    result = await RECIPEWRANGLER.disable_recipes_by_query(
+        payload.model_dump(exclude_none=True)
+    )
+    return RecipeStatusResponse(**result)
+
+
+@router.post(
+    "/recipes/{recipe_id}/disable",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def disable_recipe(
+    recipe_id: str,
+    request: Request,
+    payload: RecipeDisableRequest | None = None,
+):
+    """Disable (soft-delete) a single recipe so it is never served anywhere."""
+    result = await RECIPEWRANGLER.disable_recipe(
+        recipe_id, reason=payload.reason if payload else None
+    )
+    return RecipeStatusResponse(**result)
+
+
+@router.post(
+    "/recipes/{recipe_id}/enable",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def enable_recipe(recipe_id: str, request: Request):
+    """Re-enable a previously disabled recipe."""
+    result = await RECIPEWRANGLER.enable_recipe(recipe_id)
+    return RecipeStatusResponse(**result)

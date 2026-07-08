@@ -635,6 +635,43 @@ class RecipeParamSearchRequest(BaseModel):
         default=False,
         description="Whether to include facet counts in the response",
     )
+    include_disabled: bool = Field(
+        default=False,
+        description=(
+            "Console/admin only: include disabled (soft-deleted) recipes in "
+            "results. Requires the admin or expert role."
+        ),
+    )
+
+
+class RecipeDisableRequest(BaseModel):
+    """Payload for disabling (soft-deleting) a single recipe"""
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class RecipeBulkStatusRequest(BaseModel):
+    """Payload for bulk disable/enable by explicit recipe IDs"""
+    recipe_ids: List[str] = Field(..., min_length=1, max_length=100000)
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class RecipeDisableByQueryRequest(RecipeParamSearchRequest):
+    """Bulk disable every recipe matching the given search filters"""
+    reason: Optional[str] = Field(default=None, max_length=500)
+    allow_unfiltered: bool = Field(
+        default=False,
+        description="Explicit opt-in for an unconstrained (whole-corpus) disable",
+    )
+
+
+class RecipeStatusResponse(BaseModel):
+    """Result of a recipe disable/enable operation"""
+    status: str
+    requested: int
+    updated: int
+    recipe_ids: List[str] = Field(default_factory=list)
+    es_sync: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    message: str = "Recipe status updated"
 
 
 class RecipeDetailResponse(BaseModel):

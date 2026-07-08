@@ -104,6 +104,7 @@ class RecipeWrangler:
         *,
         region: Optional[str] = None,
         slim: bool = False,
+        include_disabled: bool = False,
     ):
         """Retrieve a recipe by id, optionally requesting a slim response."""
         params: Dict[str, Any] = {}
@@ -111,6 +112,8 @@ class RecipeWrangler:
             params["region"] = region.strip().upper()
         if slim:
             params["slim"] = True
+        if include_disabled:
+            params["include_disabled"] = True
         return await cls.get(
             f"/api/v1/recipes/{recipe_id}",
             params=params or None,
@@ -139,6 +142,7 @@ class RecipeWrangler:
         offset: int = 0,
         sort_by: str = "title_asc",
         include_facets: bool = False,
+        include_disabled: bool = False,
     ):
         """Run deterministic parameter-based recipe search."""
         payload = {
@@ -153,6 +157,7 @@ class RecipeWrangler:
             "offset": offset,
             "sort_by": sort_by,
             "include_facets": include_facets,
+            "include_disabled": include_disabled,
         }
         return await cls.post("/api/v1/recipes/param_search", json=payload)
 
@@ -196,6 +201,44 @@ class RecipeWrangler:
     async def update_recipe(cls, recipe_id: str, payload: Dict[str, Any]):
         """Patch mutable recipe fields on an existing recipe."""
         return await cls.patch(f"/api/v1/recipes/{recipe_id}", json=payload)
+
+    @classmethod
+    async def disable_recipe(cls, recipe_id: str, reason: Optional[str] = None):
+        """Disable (soft-delete) a single recipe."""
+        return await cls.post(
+            f"/api/v1/recipes/{recipe_id}/disable",
+            json={"reason": reason},
+        )
+
+    @classmethod
+    async def enable_recipe(cls, recipe_id: str):
+        """Re-enable a previously disabled recipe."""
+        return await cls.post(f"/api/v1/recipes/{recipe_id}/enable", json={})
+
+    @classmethod
+    async def bulk_disable_recipes(cls, recipe_ids: list[str], reason: Optional[str] = None):
+        """Bulk disable recipes by explicit IDs."""
+        return await cls.post(
+            "/api/v1/recipes/disable",
+            json={"recipe_ids": recipe_ids, "reason": reason},
+        )
+
+    @classmethod
+    async def bulk_enable_recipes(cls, recipe_ids: list[str]):
+        """Bulk re-enable recipes by explicit IDs."""
+        return await cls.post(
+            "/api/v1/recipes/enable",
+            json={"recipe_ids": recipe_ids},
+        )
+
+    @classmethod
+    async def disable_recipes_by_query(cls, payload: Dict[str, Any]):
+        """Bulk disable every recipe matching param_search filters."""
+        return await cls.post(
+            "/api/v1/recipes/disable-by-query",
+            json=payload,
+            timeout=300.0,  # by-query operations can touch large ID sets
+        )
 
     @classmethod
     async def substitute_recipe_ingredient(
