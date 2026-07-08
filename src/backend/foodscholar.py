@@ -170,6 +170,11 @@ class FoodScholar:
         return await FOODSCHOLAR.post("/api/v1/qa/feedback", json=payload)
 
     @classmethod
+    async def submit_memory_decision(cls, payload: dict):
+        """Accept/decline a memory nudge surfaced by a QA answer."""
+        return await FOODSCHOLAR.post("/api/v1/qa/memory", json=payload)
+
+    @classmethod
     async def list_qa_models(cls):
         return await FOODSCHOLAR.get("/api/v1/qa/models")
 

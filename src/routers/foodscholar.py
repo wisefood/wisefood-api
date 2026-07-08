@@ -6,6 +6,9 @@ from auth import auth
 from schemas import (
     ArticleInput,
     ChatRequest,
+    # Memory nudge payloads are deliberately the same shape in both apps —
+    # the FoodChat* models double as FoodScholar's.
+    FoodChatMemoryDecisionRequest,
     GuidelineImportRequest,
     QAFeedbackRequest,
     QARequest,
@@ -133,6 +136,14 @@ async def ask_question(request: Request, body: QARequest):
 @render()
 async def submit_feedback(request: Request, body: QAFeedbackRequest):
     return await FOODSCHOLAR.submit_qa_feedback(body.model_dump(exclude_none=True))
+
+
+@router.post("/qa/memory", dependencies=[Depends(auth())])
+@render()
+async def decide_memory(request: Request, body: FoodChatMemoryDecisionRequest):
+    """Accept/decline a memory nudge from a FoodScholar QA answer."""
+    await verify_member_access(request, body.member_id)
+    return await FOODSCHOLAR.submit_memory_decision(body.model_dump())
 
 
 @router.get("/qa/models", dependencies=[Depends(auth())])
