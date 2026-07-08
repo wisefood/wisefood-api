@@ -149,8 +149,8 @@ async def list_qa_questions(request: Request):
 
 @router.get("/qa/tips", dependencies=[Depends(auth())])
 @render()
-async def list_qa_tips(request: Request):
-    return await FOODSCHOLAR.get_tips()
+async def list_qa_tips(request: Request, member_id: Optional[str] = None):
+    return await FOODSCHOLAR.get_tips(member_id=member_id)
 
 
 @router.get("/guidelines/storage/{artifact_uuid}", dependencies=[Depends(auth())])

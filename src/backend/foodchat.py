@@ -327,6 +327,11 @@ class FoodChat:
         return await cls.get(f"/foodchat/members/{member_id}/sessions")
 
     @classmethod
+    async def get_member_current_plans(cls, member_id: str):
+        """Latest saved plan canvases for a member (dashboard widget)."""
+        return await cls.get(f"/foodchat/members/{member_id}/current-plans")
+
+    @classmethod
     async def chat(cls, session_id: str, member_id: str, content: str):
         """Send a message through the unified FoodChat endpoint."""
         return await cls.post(

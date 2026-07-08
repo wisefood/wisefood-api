@@ -204,6 +204,14 @@ async def get_member_sessions(request: Request, member_id: str):
     return await FOODCHAT.get_member_sessions(member_id=member_id)
 
 
+@router.get("/members/{member_id}/current-plans", dependencies=[Depends(auth())])
+@render()
+async def get_member_current_plans(request: Request, member_id: str):
+    """Most recent saved daily/weekly plans for a member (dashboard widget)."""
+    await verify_member_access(request, member_id)
+    return await FOODCHAT.get_member_current_plans(member_id=member_id)
+
+
 @router.post(
     "/sessions/{session_id}/chat",
     dependencies=[Depends(auth()), Depends(guest_budget("chat"))],

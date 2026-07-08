@@ -178,8 +178,11 @@ class FoodScholar:
         return await FOODSCHOLAR.get("/api/v1/qa/questions")
 
     @classmethod
-    async def get_tips(cls):
-        return await FOODSCHOLAR.get("/api/v1/qa/tips")
+    async def get_tips(cls, member_id: Optional[str] = None):
+        # member_id personalizes tips against the member's accumulated
+        # profile (FoodScholar falls back to generic content without it).
+        params = {"member_id": member_id} if member_id else None
+        return await FOODSCHOLAR.get("/api/v1/qa/tips", params=params)
 
     @classmethod
     async def get_guideline_storage(cls, artifact_uuid: str):
