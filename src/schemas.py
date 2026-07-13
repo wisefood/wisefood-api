@@ -169,6 +169,34 @@ class MemberFavoriteDeleteResponse(BaseModel):
     deleted: bool = Field(..., description="Whether a favorite was removed")
 
 
+# ---------- Member Adapted Recipe Schemas ----------
+class MemberAdaptedRecipeStoreRequest(BaseModel):
+    """Body for saving a member's adapted version of a recipe (upsert)."""
+    title: Optional[str] = Field(
+        default=None, max_length=512,
+        description="Display title of the adapted recipe",
+    )
+    payload: Dict[str, Any] = Field(
+        ...,
+        description="Adapted recipe content: ingredients with the swap/reduce "
+                    "applied, applied-suggestion metadata, simulated nutrition",
+    )
+
+
+class MemberAdaptedRecipeResponse(BaseModel):
+    recipe_id: str = Field(..., min_length=1, max_length=128, description="Original opaque RecipeWrangler recipe id")
+    title: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemberAdaptedRecipeDeleteResponse(BaseModel):
+    deleted: bool = Field(..., description="Whether an adapted recipe was removed")
+
+
 # ---------- User Consent Schemas ----------
 class UserConsentCreate(BaseModel):
     """
@@ -860,6 +888,71 @@ class RecipeSubstituteResponse(BaseModel):
     substitution_source: Optional[str] = None
     candidates: List[str] = Field(default_factory=list)
     modified_recipe_profile: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class RecipeAdaptModeEnum(str, Enum):
+    """Optimisation targets for recipe adaptation suggestions."""
+    nutrition = "nutrition"
+    sustainability = "sustainability"
+    reduce_quantity = "reduce_quantity"
+
+
+class RecipeAdaptSuggestionsRequest(BaseModel):
+    """Request payload for ranked recipe-adaptation suggestions."""
+    region: RecipeRegionEnum = Field(
+        default=RecipeRegionEnum.IE,
+        description="Nutrition region used to evaluate the recipe",
+    )
+    mode: RecipeAdaptModeEnum = Field(
+        default=RecipeAdaptModeEnum.nutrition,
+        description="Optimisation target: improve Nutri-Score, cut CO2e, or reduce quantity",
+    )
+    max_swaps: int = Field(
+        default=1, ge=1, le=3,
+        description="Number of top-ranked suggestions to return",
+    )
+    use_llm: bool = Field(
+        default=False,
+        description="Run the LLM judge over the deterministic candidate set "
+                    "(falls back to the deterministic ranking on any failure)",
+    )
+
+
+class RecipeAdaptSuggestionsResponse(BaseModel):
+    """Ranked adaptation suggestions; recipe-backend payload passes through."""
+    recipe_id: str
+    region: str
+    mode: str
+    offending_ingredient: Optional[str] = None
+    suggestions: List[Dict[str, Any]] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class RecipeAdaptSwapInput(BaseModel):
+    """One specific ingredient swap to simulate."""
+    original_ingredient: str = Field(..., min_length=1)
+    substitute_ingredient: str = Field(..., min_length=1)
+    weight_g: Optional[float] = Field(
+        default=None, gt=0,
+        description="Override for the substitute weight; defaults to the original's weight",
+    )
+
+
+class RecipeAdaptSimulateRequest(BaseModel):
+    """Request payload for simulating a specific ingredient swap."""
+    region: RecipeRegionEnum = Field(default=RecipeRegionEnum.IE)
+    swap: RecipeAdaptSwapInput
+
+
+class RecipeAdaptSimulateResponse(BaseModel):
+    """Simulated swap outcome; recipe-backend payload passes through."""
+    recipe_id: str
+    region: str
+    original_nutri_score: Optional[str] = None
+    simulated_nutri_score: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
 

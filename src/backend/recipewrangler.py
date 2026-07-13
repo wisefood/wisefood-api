@@ -254,4 +254,50 @@ class RecipeWrangler:
         }
         return await cls.post(f"/api/v1/recipes/{recipe_id}/substitute", json=payload)
 
+    @classmethod
+    async def adapt_suggestions(
+        cls,
+        recipe_id: str,
+        region: str = "IE",
+        mode: str = "nutrition",
+        max_swaps: int = 1,
+        use_llm: bool = False,
+    ):
+        """Ranked ingredient-swap suggestions to improve Nutri-Score or CO2e."""
+        payload = {
+            "region": region,
+            "mode": mode,
+            "max_swaps": max_swaps,
+            "use_llm": use_llm,
+        }
+        return await cls.post(
+            f"/api/v1/recipes/{recipe_id}/adapt/suggestions",
+            json=payload,
+            timeout=120.0,  # candidate search + optional LLM judge can be slow
+        )
+
+    @classmethod
+    async def adapt_simulate(
+        cls,
+        recipe_id: str,
+        region: str,
+        original_ingredient: str,
+        substitute_ingredient: str,
+        weight_g: Optional[float] = None,
+    ):
+        """Simulate one specific ingredient swap and return nutrition deltas."""
+        payload = {
+            "region": region,
+            "swap": {
+                "original_ingredient": original_ingredient,
+                "substitute_ingredient": substitute_ingredient,
+                "weight_g": weight_g,
+            },
+        }
+        return await cls.post(
+            f"/api/v1/recipes/{recipe_id}/adapt/simulate",
+            json=payload,
+            timeout=120.0,
+        )
+
 RECIPEWRANGLER = RecipeWrangler.get_client()

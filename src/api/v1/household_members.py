@@ -9,7 +9,7 @@ from sqlalchemy import select, delete
 from uuid import uuid4
 
 from entity import Entity
-from sql import HouseholdMember, HouseholdMemberProfile, Household, MemberFavorite, AgeGroup, DietaryGroup
+from sql import HouseholdMember, HouseholdMemberProfile, Household, MemberAdaptedRecipe, MemberFavorite, AgeGroup, DietaryGroup
 from exceptions import NotFoundError, ConflictError
 from schemas import HouseholdMemberResponse, HouseholdMemberCreate, HouseholdMemberUpdate
 from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
@@ -497,6 +497,116 @@ class HouseholdMemberEntity(Entity):
                 delete(MemberFavorite).where(
                     MemberFavorite.member_id == member_id,
                     MemberFavorite.recipe_id == recipe_id,
+                )
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    # ========== Member Adapted Recipe Operations ==========
+
+    async def list_adapted_recipes(
+        self,
+        member_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        List a member's adapted recipes, most recently updated first.
+
+        :param member_id: The member ID
+        :return: List of adapted-recipe dictionaries
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(MemberAdaptedRecipe)
+                .where(MemberAdaptedRecipe.member_id == member_id)
+                .order_by(MemberAdaptedRecipe.updated_at.desc())
+            )
+            return [r.to_dict() for r in result.scalars().all()]
+
+    async def get_adapted_recipe(
+        self,
+        member_id: str,
+        recipe_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a member's adaptation of one recipe, or None if not saved.
+
+        :param member_id: The member ID
+        :param recipe_id: Original opaque RecipeWrangler recipe ID
+        :return: Adapted-recipe dictionary or None
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(MemberAdaptedRecipe).where(
+                    MemberAdaptedRecipe.member_id == member_id,
+                    MemberAdaptedRecipe.recipe_id == recipe_id,
+                )
+            )
+            row = result.scalar_one_or_none()
+            return row.to_dict() if row else None
+
+    async def upsert_adapted_recipe(
+        self,
+        member_id: str,
+        recipe_id: str,
+        title: Optional[str],
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Save (or replace) a member's adaptation of a recipe.
+
+        One adaptation per (member, recipe): saving again overwrites the
+        previous title/payload.
+
+        :param member_id: The member ID
+        :param recipe_id: Original opaque RecipeWrangler recipe ID
+        :param title: Display title of the adapted recipe
+        :param payload: Adapted recipe content (ingredients, swap, nutrition)
+        :return: Adapted-recipe dictionary
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(MemberAdaptedRecipe).where(
+                    MemberAdaptedRecipe.member_id == member_id,
+                    MemberAdaptedRecipe.recipe_id == recipe_id,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                existing.title = title
+                existing.payload = payload or {}
+                existing.updated_at = datetime.now(timezone.utc)
+                await db.flush()
+                adapted_dict = existing.to_dict()
+            else:
+                adapted = MemberAdaptedRecipe(
+                    member_id=member_id,
+                    recipe_id=recipe_id,
+                    title=title,
+                    payload=payload or {},
+                )
+                db.add(adapted)
+                await db.flush()
+                adapted_dict = adapted.to_dict()
+            await db.commit()
+            return adapted_dict
+
+    async def remove_adapted_recipe(
+        self,
+        member_id: str,
+        recipe_id: str,
+    ) -> bool:
+        """
+        Remove a member's adaptation of a recipe (idempotent).
+
+        :param member_id: The member ID
+        :param recipe_id: Original opaque RecipeWrangler recipe ID
+        :return: True if an adaptation was deleted, False if it did not exist
+        """
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                delete(MemberAdaptedRecipe).where(
+                    MemberAdaptedRecipe.member_id == member_id,
+                    MemberAdaptedRecipe.recipe_id == recipe_id,
                 )
             )
             await db.commit()

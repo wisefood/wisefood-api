@@ -174,6 +174,9 @@ class HouseholdMember(Base):
     favorites: Mapped[List["MemberFavorite"]] = relationship(
         "MemberFavorite", back_populates="member", cascade="all, delete-orphan"
     )
+    adapted_recipes: Mapped[List["MemberAdaptedRecipe"]] = relationship(
+        "MemberAdaptedRecipe", back_populates="member", cascade="all, delete-orphan"
+    )
 
     def to_dict(self, include_profile: bool = False) -> dict:
         result = {
@@ -259,6 +262,53 @@ class MemberFavorite(Base):
         return {
             "recipe_id": self.recipe_id,
             "created_at": self.created_at.isoformat(),
+        }
+
+
+class MemberAdaptedRecipe(Base):
+    """
+    A member's personal adapted version of a RecipeWrangler recipe.
+
+    recipe_id is the ORIGINAL opaque RecipeWrangler identifier; one adaptation
+    per (member, recipe) — saving again replaces the previous adaptation.
+    payload holds the adapted recipe (title, ingredients, applied swap/reduce,
+    simulated nutrition) and is only ever served back to the owning member's
+    household owner (or admin/agent service callers). Removed with the member
+    via ON DELETE CASCADE.
+    """
+
+    __tablename__ = "member_adapted_recipe"
+    __table_args__ = {"schema": "wisefood"}
+
+    member_id = mapped_column(
+        String(100),
+        ForeignKey("wisefood.household_member.id", ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+    )
+    recipe_id = mapped_column(String(128), primary_key=True)
+    title = mapped_column(String(512), nullable=True)
+    payload = mapped_column(JSONB, nullable=False, default=dict)
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    member: Mapped["HouseholdMember"] = relationship("HouseholdMember", back_populates="adapted_recipes")
+
+    def to_dict(self) -> dict:
+        return {
+            "recipe_id": self.recipe_id,
+            "title": self.title,
+            "payload": self.payload or {},
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
 

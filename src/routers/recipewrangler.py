@@ -6,6 +6,10 @@ from backend.recipewrangler import RECIPEWRANGLER
 from budget import guest_budget
 from exceptions import AuthorizationError
 from schemas import (
+    RecipeAdaptSimulateRequest,
+    RecipeAdaptSimulateResponse,
+    RecipeAdaptSuggestionsRequest,
+    RecipeAdaptSuggestionsResponse,
     RecipeProfileRequest,
     RecipeSearchRequest,
     RecipeParamSearchRequest,
@@ -202,6 +206,48 @@ async def substitute_recipe_ingredient(
         region=payload.region.value,
     )
     return RecipeSubstituteResponse(**substituted)
+
+
+@router.post(
+    "/recipes/{recipe_id}/adapt/suggestions",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
+@render()
+async def adapt_recipe_suggestions(
+    recipe_id: str,
+    payload: RecipeAdaptSuggestionsRequest,
+    request: Request,
+):
+    """Ranked ingredient-swap suggestions to improve the recipe's Nutri-Score or CO2e."""
+    suggestions = await RECIPEWRANGLER.adapt_suggestions(
+        recipe_id=recipe_id,
+        region=payload.region.value,
+        mode=payload.mode.value,
+        max_swaps=payload.max_swaps,
+        use_llm=payload.use_llm,
+    )
+    return RecipeAdaptSuggestionsResponse(**suggestions)
+
+
+@router.post(
+    "/recipes/{recipe_id}/adapt/simulate",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
+@render()
+async def adapt_recipe_simulate(
+    recipe_id: str,
+    payload: RecipeAdaptSimulateRequest,
+    request: Request,
+):
+    """Simulate one specific ingredient swap and return the nutrition deltas."""
+    simulated = await RECIPEWRANGLER.adapt_simulate(
+        recipe_id=recipe_id,
+        region=payload.region.value,
+        original_ingredient=payload.swap.original_ingredient,
+        substitute_ingredient=payload.swap.substitute_ingredient,
+        weight_g=payload.swap.weight_g,
+    )
+    return RecipeAdaptSimulateResponse(**simulated)
 
 
 # ---------------------------------------------------------------------------

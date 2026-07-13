@@ -16,6 +16,9 @@ from schemas import (
     HouseholdMemberProfileCreate,
     HouseholdMemberProfileUpdate,
     HouseholdMemberProfileResponse,
+    MemberAdaptedRecipeDeleteResponse,
+    MemberAdaptedRecipeResponse,
+    MemberAdaptedRecipeStoreRequest,
     MemberFavoriteResponse,
     MemberFavoriteDeleteResponse,
 )
@@ -290,3 +293,89 @@ async def api_delete_member_favorite(
     deleted = await HOUSEHOLD_MEMBER.remove_favorite(member_id, recipe_id)
 
     return MemberFavoriteDeleteResponse(deleted=deleted)
+
+
+# ========== Household Member Adapted Recipes Endpoints ==========
+# Strictly owner-scoped: verify_access grants only the household owner
+# (or admin/agent service callers such as FoodChat).
+
+
+@router.get(
+    "/{member_id}/adapted-recipes",
+    dependencies=[Depends(auth())],
+    summary="List a member's adapted recipes",
+    description="List a household member's saved adapted recipes, most recently updated first. User must be the household owner or admin.",
+)
+@render()
+async def api_list_member_adapted_recipes(
+    request: Request,
+    member_id: str,
+):
+    """List a member's adapted recipes. User must have access."""
+    await verify_access(request, None, member_id)
+
+    adapted = await HOUSEHOLD_MEMBER.list_adapted_recipes(member_id)
+    return [MemberAdaptedRecipeResponse(**a) for a in adapted]
+
+
+@router.get(
+    "/{member_id}/adapted-recipes/{recipe_id}",
+    dependencies=[Depends(auth())],
+    summary="Get a member's adaptation of one recipe",
+    description="Get a household member's saved adaptation of a specific recipe. 404 if the member has not saved one. User must be the household owner or admin.",
+)
+@render()
+async def api_get_member_adapted_recipe(
+    request: Request,
+    member_id: str,
+    recipe_id: str = Path(..., min_length=1, max_length=128, description="Original opaque RecipeWrangler recipe id"),
+):
+    """Get a member's adaptation of one recipe. User must have access."""
+    await verify_access(request, None, member_id)
+
+    adapted = await HOUSEHOLD_MEMBER.get_adapted_recipe(member_id, recipe_id)
+    if adapted is None:
+        raise NotFoundError(detail=f"No adapted recipe saved for '{recipe_id}'")
+    return MemberAdaptedRecipeResponse(**adapted)
+
+
+@router.put(
+    "/{member_id}/adapted-recipes/{recipe_id}",
+    dependencies=[Depends(auth())],
+    summary="Save a member's adapted version of a recipe",
+    description="Save (or replace) a household member's adapted version of a recipe. One adaptation per (member, recipe). User must be the household owner or admin.",
+)
+@render()
+async def api_save_member_adapted_recipe(
+    request: Request,
+    member_id: str,
+    payload: MemberAdaptedRecipeStoreRequest,
+    recipe_id: str = Path(..., min_length=1, max_length=128, description="Original opaque RecipeWrangler recipe id"),
+):
+    """Save (upsert) a member's adapted version of a recipe. User must have access."""
+    await verify_access(request, None, member_id)
+
+    adapted = await HOUSEHOLD_MEMBER.upsert_adapted_recipe(
+        member_id, recipe_id, payload.title, payload.payload
+    )
+    return MemberAdaptedRecipeResponse(**adapted)
+
+
+@router.delete(
+    "/{member_id}/adapted-recipes/{recipe_id}",
+    dependencies=[Depends(auth())],
+    summary="Remove a member's adaptation of a recipe",
+    description="Idempotently remove a household member's saved adaptation of a recipe. User must be the household owner or admin.",
+)
+@render()
+async def api_delete_member_adapted_recipe(
+    request: Request,
+    member_id: str,
+    recipe_id: str = Path(..., min_length=1, max_length=128, description="Original opaque RecipeWrangler recipe id"),
+):
+    """Remove a member's adaptation of a recipe (idempotent). User must have access."""
+    await verify_access(request, None, member_id)
+
+    deleted = await HOUSEHOLD_MEMBER.remove_adapted_recipe(member_id, recipe_id)
+
+    return MemberAdaptedRecipeDeleteResponse(deleted=deleted)
