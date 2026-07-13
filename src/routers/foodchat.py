@@ -14,6 +14,7 @@ from schemas import (
     FoodChatCreateSessionRequest,
     FoodChatFeedbackRequest,
     FoodChatMemoryDecisionRequest,
+    FoodChatPlanParametersRequest,
     FoodChatUpdateDinersRequest,
 )
 
@@ -271,6 +272,26 @@ async def submit_memory_decision(
         member_id=payload.member_id,
         decision=payload.decision,
         suggestion=payload.suggestion.model_dump(),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/plan-parameters",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def apply_plan_parameters(
+    request: Request,
+    session_id: str,
+    payload: FoodChatPlanParametersRequest,
+):
+    """Apply interactive plan-parameter card values (time budget, difficulty,
+    goal) as a deterministic plan refinement."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.apply_plan_parameters(
+        session_id=session_id,
+        member_id=payload.member_id,
+        values=payload.values,
     )
 
 

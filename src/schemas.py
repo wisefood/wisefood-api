@@ -1015,6 +1015,18 @@ class FoodChatMemoryDecisionRequest(BaseModel):
     )
 
 
+class FoodChatPlanParametersRequest(BaseModel):
+    """Request payload for applying interactive plan-parameter card values."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    values: Dict[str, Any] = Field(
+        ...,
+        description="Chosen values keyed by parameter (cooking_time, difficulty, goal)",
+    )
+
+
 class FoodChatUpdateDinersRequest(BaseModel):
     """Request payload for updating the diners of a FoodChat session."""
     member_id: str = Field(

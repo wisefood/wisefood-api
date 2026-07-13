@@ -341,6 +341,20 @@ class FoodChat:
         )
 
     @classmethod
+    async def apply_plan_parameters(
+        cls,
+        session_id: str,
+        member_id: str,
+        values: Dict[str, Any],
+    ):
+        """Apply plan-parameter card values — generates like a chat turn."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/plan-parameters",
+            json={"member_id": member_id, "values": values},
+            timeout=cls._extra_long_timeout(),
+        )
+
+    @classmethod
     async def get_conversation(
         cls,
         session_id: str,
