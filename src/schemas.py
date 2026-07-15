@@ -603,6 +603,18 @@ class RecipeSearchRequest(BaseModel):
         default_factory=list,
         description="Allergen names to exclude (e.g., ['peanut', 'tree_nut'])"
     )
+    diet_tags: List[str] = Field(
+        default_factory=list,
+        description="Hard diet filters (e.g. member dietary groups: ['vegan', 'gluten_free'])"
+    )
+    preferred_ingredients: List[str] = Field(
+        default_factory=list,
+        description="Soft preference boosts from the member profile — reorder results, never filter"
+    )
+    region: Optional[str] = Field(
+        default=None,
+        description="Region whose nutri-score the result cards carry: US, IE, HU, or EU"
+    )
 
 
 class RecipeParamSearchSortEnum(str, Enum):
@@ -917,6 +929,11 @@ class RecipeAdaptSuggestionsRequest(BaseModel):
         default=False,
         description="Run the LLM judge over the deterministic candidate set "
                     "(falls back to the deterministic ranking on any failure)",
+    )
+    goal_nutrients: List[str] = Field(
+        default_factory=list,
+        description="Member dietary-goal slugs (e.g. reduce_fat) biasing which "
+                    "nutrient the nutrition-mode adaptation targets",
     )
 
 

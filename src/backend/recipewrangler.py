@@ -1,9 +1,41 @@
 import httpx
 from typing import Any, Dict, Optional
 from main import config
+from exceptions import APIException
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_for_upstream(response: httpx.Response) -> None:
+    """Propagate RecipeWrangler errors with their real status and detail.
+
+    raise_for_status() used to surface every upstream 4xx as an opaque 500
+    InternalError, hiding messages like "No profile found ... Profile the
+    recipe first." from clients.
+    """
+    if response.status_code < 400:
+        return
+    detail = ""
+    code = None
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict):
+                detail = str(err.get("detail") or "")
+                code = err.get("code")
+            if not detail and body.get("detail") is not None:
+                raw = body.get("detail")
+                detail = raw if isinstance(raw, str) else str(raw)
+    except Exception:
+        detail = (response.text or "")[:300]
+    raise APIException(
+        status_code=response.status_code,
+        detail=detail or f"RecipeWrangler returned HTTP {response.status_code}",
+        code=code or "upstream/recipewrangler",
+        extra={"title": "UpstreamError", "upstream_status": response.status_code},
+    )
 
 
 class RecipeWrangler:
@@ -36,55 +68,48 @@ class RecipeWrangler:
         return cls
 
     @classmethod
-    async def get(
-        cls, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs
-    ):
+    async def _request(cls, method: str, endpoint: str, **kwargs) -> httpx.Response:
         if cls._client is None:
             raise RuntimeError(
                 "RecipeWrangler client not initialized. Call get_client() first."
             )
-        response = await cls._client.get(endpoint, params=params, **kwargs)
-        response.raise_for_status()
+        try:
+            response = await cls._client.request(method, endpoint, **kwargs)
+        except httpx.TimeoutException as exc:
+            raise APIException(
+                status_code=504,
+                detail=f"RecipeWrangler timed out on {method} {endpoint}",
+                code="upstream/timeout",
+                extra={"title": "UpstreamTimeout"},
+            ) from exc
+        _raise_for_upstream(response)
+        return response
+
+    @classmethod
+    async def get(
+        cls, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs
+    ):
+        response = await cls._request("GET", endpoint, params=params, **kwargs)
         return response.json()
 
     @classmethod
     async def post(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
-            )
-        response = await cls._client.post(endpoint, data=data, json=json, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("POST", endpoint, data=data, json=json, **kwargs)
         return response.json()
 
     @classmethod
     async def put(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
-            )
-        response = await cls._client.put(endpoint, data=data, json=json, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("PUT", endpoint, data=data, json=json, **kwargs)
         return response.json()
 
     @classmethod
     async def patch(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
-            )
-        response = await cls._client.patch(endpoint, data=data, json=json, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("PATCH", endpoint, data=data, json=json, **kwargs)
         return response.json()
 
     @classmethod
     async def delete(cls, endpoint: str, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "RecipeWrangler client not initialized. Call get_client() first."
-            )
-        response = await cls._client.delete(endpoint, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("DELETE", endpoint, **kwargs)
         return response.json() if response.text else {"status": "deleted"}
 
     @classmethod
@@ -120,12 +145,23 @@ class RecipeWrangler:
         )
 
     @classmethod
-    async def search_recipes(cls, question: str, exclude_allergens: list[str] = None):
+    async def search_recipes(
+        cls,
+        question: str,
+        exclude_allergens: list[str] = None,
+        diet_tags: list[str] = None,
+        preferred_ingredients: list[str] = None,
+        region: str = None,
+    ):
         """Search recipes via the knowledge graph."""
         payload = {
             "question": question,
-            "exclude_allergens": exclude_allergens or []
+            "exclude_allergens": exclude_allergens or [],
+            "diet_tags": diet_tags or [],
+            "preferred_ingredients": preferred_ingredients or [],
         }
+        if region:
+            payload["region"] = region
         return await cls.post("/api/v1/recipes/search", json=payload)
 
     @classmethod
@@ -262,6 +298,7 @@ class RecipeWrangler:
         mode: str = "nutrition",
         max_swaps: int = 1,
         use_llm: bool = False,
+        goal_nutrients: list[str] = None,
     ):
         """Ranked ingredient-swap suggestions to improve Nutri-Score or CO2e."""
         payload = {
@@ -269,6 +306,7 @@ class RecipeWrangler:
             "mode": mode,
             "max_swaps": max_swaps,
             "use_llm": use_llm,
+            "goal_nutrients": goal_nutrients or [],
         }
         return await cls.post(
             f"/api/v1/recipes/{recipe_id}/adapt/suggestions",

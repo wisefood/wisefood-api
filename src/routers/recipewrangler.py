@@ -141,7 +141,10 @@ async def search_recipes(payload: RecipeSearchRequest, request: Request):
     """Search recipes via the knowledge graph."""
     return await RECIPEWRANGLER.search_recipes(
         question=payload.question,
-        exclude_allergens=payload.exclude_allergens
+        exclude_allergens=payload.exclude_allergens,
+        diet_tags=payload.diet_tags,
+        preferred_ingredients=payload.preferred_ingredients,
+        region=payload.region,
     )
 
 
@@ -225,6 +228,7 @@ async def adapt_recipe_suggestions(
         mode=payload.mode.value,
         max_swaps=payload.max_swaps,
         use_llm=payload.use_llm,
+        goal_nutrients=payload.goal_nutrients,
     )
     return RecipeAdaptSuggestionsResponse(**suggestions)
 
