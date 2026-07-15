@@ -2,7 +2,7 @@
 Image upload and retrieval endpoints.
 """
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
 
 from api.v1.images import IMAGE_STORAGE
 from auth import auth
@@ -33,6 +33,35 @@ def upload_image(
         request.url_for("get_image", image_id=stored["image_id"])
     )
     return ImageUploadResponse(**stored)
+
+
+# NOTE: declared before /{image_id} so "preview" is not captured as an id.
+@router.get(
+    "/preview",
+    name="get_image_preview",
+    summary="Downscaled preview of an external recipe image",
+    description=(
+        "Fetches an external recipe image once, downscales it to the requested "
+        "width (WebP), and serves it from the server-side image cache thereafter. "
+        "Used by search-result cards; falls back client-side to the original URL "
+        "when the preview cannot be produced."
+    ),
+)
+@render()
+def get_image_preview(
+    request: Request,
+    src: str = Query(..., min_length=8, max_length=2048, description="Absolute http(s) image URL"),
+    w: int = Query(480, ge=64, le=1024, description="Target width in px (snapped to 160/320/480/640)"),
+):
+    stored = IMAGE_STORAGE.get_preview(src, w)
+    return Response(
+        content=stored["data"],
+        media_type=stored["content_type"],
+        headers={
+            "Cache-Control": "public, max-age=604800",
+            "Content-Length": str(len(stored["data"])),
+        },
+    )
 
 
 @router.get(

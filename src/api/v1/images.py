@@ -3,14 +3,19 @@ Image upload and retrieval service backed by MinIO.
 """
 from __future__ import annotations
 
+import hashlib
+import ipaddress
+import socket
 from io import BytesIO
 from typing import Dict, Tuple
+from urllib.parse import urlparse
 from uuid import uuid4
 import logging
 
+import httpx
 from fastapi import UploadFile
 from minio.error import S3Error
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from backend.minio import MINIO_CLIENT
 from backend.redis import IMAGE_CACHE
@@ -178,6 +183,104 @@ class ImageStorageService:
             "data": body,
             "content_type": content_type,
         }
+
+    # ------------------------------------------------------------------
+    # Downscaled previews of external recipe images (search-result cards)
+    # ------------------------------------------------------------------
+
+    PREVIEW_WIDTHS = (160, 320, 480, 640)
+    PREVIEW_MAX_SOURCE_BYTES = 8 * 1024 * 1024
+    _preview_http: httpx.Client | None = None
+
+    @classmethod
+    def _preview_client(cls) -> httpx.Client:
+        if cls._preview_http is None:
+            cls._preview_http = httpx.Client(
+                timeout=6.0,
+                follow_redirects=True,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                headers={"User-Agent": "WiseFood-ImagePreview/1.0"},
+            )
+        return cls._preview_http
+
+    @staticmethod
+    def _assert_public_http_url(src: str) -> None:
+        """SSRF guard: the proxy must never fetch cluster-internal targets."""
+        parsed = urlparse(src)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise DataError(detail="Invalid image source URL")
+        try:
+            infos = socket.getaddrinfo(parsed.hostname, None)
+        except OSError as exc:
+            raise NotFoundError(detail="Image host could not be resolved") from exc
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if (
+                ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+            ):
+                raise DataError(detail="Image source not allowed")
+
+    @classmethod
+    def _clamp_preview_width(cls, width: int) -> int:
+        for allowed in cls.PREVIEW_WIDTHS:
+            if width <= allowed:
+                return allowed
+        return cls.PREVIEW_WIDTHS[-1]
+
+    def get_preview(self, src: str, width: int) -> Dict[str, object]:
+        """Fetch an external recipe image, downscale it, and cache the bytes.
+
+        Cards render at a few hundred px while origin photos are often 1-2MB;
+        the downscaled WebP is typically 10-30KB and, unlike the origin fetch,
+        is served from OUR Redis LRU on every subsequent request.
+        """
+        width = self._clamp_preview_width(int(width))
+        cache_key = f"prev-{hashlib.sha256(src.encode('utf-8')).hexdigest()[:40]}-{width}"
+
+        cached = IMAGE_CACHE.get(cache_key)
+        if cached is not None:
+            data, content_type = cached
+            return {"data": data, "content_type": content_type}
+
+        self._assert_public_http_url(src)
+        try:
+            response = self._preview_client().get(src)
+        except httpx.HTTPError as exc:
+            raise NotFoundError(detail="Image source unreachable") from exc
+        if response.status_code >= 400:
+            raise NotFoundError(detail=f"Image source returned HTTP {response.status_code}")
+        # Redirects are followed; re-check the landing host too.
+        self._assert_public_http_url(str(response.url))
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip()
+        if content_type and not content_type.startswith("image/"):
+            raise DataError(detail="Image source did not return an image")
+        if len(response.content) > self.PREVIEW_MAX_SOURCE_BYTES:
+            raise DataError(detail="Image source too large")
+
+        try:
+            image = Image.open(BytesIO(response.content))
+            image.load()
+            image = ImageOps.exif_transpose(image)
+        except (UnidentifiedImageError, OSError) as exc:
+            raise DataError(detail="Image source could not be decoded") from exc
+
+        if image.mode not in {"RGB", "L"}:
+            image = image.convert("RGB")
+        image.thumbnail((width, width * 2), Image.LANCZOS)
+
+        buffer = BytesIO()
+        try:
+            image.save(buffer, format="WEBP", quality=78, method=4)
+            out_content_type = "image/webp"
+        except Exception:
+            buffer = BytesIO()
+            image.save(buffer, format="JPEG", quality=80, optimize=True)
+            out_content_type = "image/jpeg"
+        data = buffer.getvalue()
+
+        IMAGE_CACHE.set(cache_key, data, out_content_type)
+        return {"data": data, "content_type": out_content_type}
 
 
 IMAGE_STORAGE = ImageStorageService()
