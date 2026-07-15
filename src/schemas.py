@@ -605,7 +605,7 @@ class RecipeSearchRequest(BaseModel):
     )
     diet_tags: List[str] = Field(
         default_factory=list,
-        description="Hard diet filters (e.g. member dietary groups: ['vegan', 'gluten_free'])"
+        description="Member dietary groups (e.g. ['vegan', 'gluten_free']) applied as soft ranking boosts"
     )
     preferred_ingredients: List[str] = Field(
         default_factory=list,
