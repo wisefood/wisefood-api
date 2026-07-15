@@ -13,6 +13,39 @@ from sql import HouseholdMember, HouseholdMemberProfile, Household, MemberAdapte
 from exceptions import NotFoundError, ConflictError
 from schemas import HouseholdMemberResponse, HouseholdMemberCreate, HouseholdMemberUpdate
 from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
+from backend.redis import REDIS
+
+# Member profiles are read on nearly every personalized request (search
+# personalization, FoodScholar context, FoodChat plans) but change rarely —
+# cache them briefly and invalidate on every write. Cache failures must never
+# break profile reads, hence the blanket try/excepts.
+_PROFILE_CACHE_TTL_SECONDS = 300
+
+
+def _profile_cache_key(member_id: str) -> str:
+    return f"member_profile:{member_id}"
+
+
+def _profile_cache_get(member_id: str):
+    try:
+        value = REDIS.get(_profile_cache_key(member_id))
+        return value if isinstance(value, dict) else None
+    except Exception:
+        return None
+
+
+def _profile_cache_put(member_id: str, profile: Dict[str, Any]) -> None:
+    try:
+        REDIS.set(_profile_cache_key(member_id), profile, ttl_seconds=_PROFILE_CACHE_TTL_SECONDS)
+    except Exception:
+        pass
+
+
+def _profile_cache_invalidate(member_id: str) -> None:
+    try:
+        REDIS.delete(_profile_cache_key(member_id))
+    except Exception:
+        pass
 
 
 class HouseholdMemberEntity(Entity):
@@ -241,6 +274,8 @@ class HouseholdMemberEntity(Entity):
                 delete(HouseholdMember).where(HouseholdMember.id == entity_id)
             )
             await db.commit()
+            # The member's profile is removed with them (cascade).
+            _profile_cache_invalidate(entity_id)
             return result.rowcount > 0
 
     async def search(
@@ -341,6 +376,7 @@ class HouseholdMemberEntity(Entity):
 
             profile_dict = await self._create_member_profile_in_session(db, member_id, profile_data)
             await db.commit()
+            _profile_cache_invalidate(member_id)
             return profile_dict
 
     async def get_member_profile(
@@ -353,6 +389,10 @@ class HouseholdMemberEntity(Entity):
         :param member_id: The member ID
         :return: Profile dictionary or None
         """
+        cached = _profile_cache_get(member_id)
+        if cached is not None:
+            return cached
+
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
             result = await db.execute(
                 select(HouseholdMemberProfile).where(
@@ -362,7 +402,9 @@ class HouseholdMemberEntity(Entity):
             profile = result.scalar_one_or_none()
 
             if profile:
-                return profile.to_dict()
+                profile_dict = profile.to_dict()
+                _profile_cache_put(member_id, profile_dict)
+                return profile_dict
             return None
 
     async def update_member_profile(
@@ -407,7 +449,9 @@ class HouseholdMemberEntity(Entity):
             profile.updated_at = datetime.now(timezone.utc)
             await db.flush()
             await db.commit()
-            return profile.to_dict()
+            profile_dict = profile.to_dict()
+            _profile_cache_invalidate(member_id)
+            return profile_dict
 
     async def delete_member_profile(
         self,
@@ -426,6 +470,7 @@ class HouseholdMemberEntity(Entity):
                 )
             )
             await db.commit()
+            _profile_cache_invalidate(member_id)
             return result.rowcount > 0
 
     # ========== Member Favorite Operations ==========

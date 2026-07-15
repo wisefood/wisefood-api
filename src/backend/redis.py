@@ -26,14 +26,19 @@ class RedisClient:
         logging.info("Initialized Redis connection pool")
         return cls._pool
 
-    def set(self, key, value):
-        """Set a value in Redis using a connection from the pool."""
+    def set(self, key, value, ttl_seconds=None):
+        """Set a value in Redis using a connection from the pool.
+
+        Pass ttl_seconds for entries that must expire (caches).
+        """
         try:
             if self._pool is None:
                 self._initialize_redis()
             conn = redis.Redis(connection_pool=self._pool)
             if isinstance(value, dict):
-                conn.set(key, json.dumps(value))  # Serialize dict to JSON string
+                value = json.dumps(value)  # Serialize dict to JSON string
+            if ttl_seconds:
+                conn.setex(key, int(ttl_seconds), value)
             else:
                 conn.set(key, value)
         except Exception as e:
