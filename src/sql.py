@@ -177,6 +177,9 @@ class HouseholdMember(Base):
     adapted_recipes: Mapped[List["MemberAdaptedRecipe"]] = relationship(
         "MemberAdaptedRecipe", back_populates="member", cascade="all, delete-orphan"
     )
+    saved_meal_plans: Mapped[List["SavedMealPlan"]] = relationship(
+        "SavedMealPlan", back_populates="member", cascade="all, delete-orphan"
+    )
 
     def to_dict(self, include_profile: bool = False) -> dict:
         result = {
@@ -419,6 +422,72 @@ class MealPlan(Base):
                 result["other_member_ids"] = member_ids
 
         return result
+
+
+class SavedMealPlan(Base):
+    """
+    A meal plan a member saved to their library under a name.
+
+    A snapshot, not a reference: the meals are copied in, so revoking the
+    scheduled plan it came from does not empty the saved copy. Kept separate
+    from MealPlan because a scheduled plan is pinned to a date and a saved one
+    deliberately is not — see schemas/30_meal_plan_library.sql.
+    """
+
+    __tablename__ = "saved_meal_plan"
+    __table_args__ = (
+        Index("ix_saved_meal_plan_member_id", "member_id"),
+        Index("ix_saved_meal_plan_member_created", "member_id", "created_at"),
+        {"schema": "wisefood"},
+    )
+
+    id = mapped_column(String(64), primary_key=True, default=lambda: str(uuid4()))
+    member_id = mapped_column(
+        String(100),
+        ForeignKey("wisefood.household_member.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    name = mapped_column(String(255), nullable=False)
+    # Provenance only — intentionally not a FK, since the plan this was saved
+    # from may be revoked while the saved copy remains.
+    source_meal_plan_id = mapped_column(String(64), nullable=True)
+    source_applied_on = mapped_column(Date, nullable=True)
+    breakfast = mapped_column(JSONB, nullable=False, default=dict)
+    lunch = mapped_column(JSONB, nullable=False, default=dict)
+    dinner = mapped_column(JSONB, nullable=False, default=dict)
+    reasoning = mapped_column(Text, nullable=True)
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    member: Mapped["HouseholdMember"] = relationship(
+        "HouseholdMember", back_populates="saved_meal_plans"
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "member_id": self.member_id,
+            "name": self.name,
+            "source_meal_plan_id": self.source_meal_plan_id,
+            "source_applied_on": (
+                self.source_applied_on.isoformat() if self.source_applied_on else None
+            ),
+            "breakfast": self.breakfast or {},
+            "lunch": self.lunch or {},
+            "dinner": self.dinner or {},
+            "reasoning": self.reasoning,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
 
 
 class MealPlanMember(Base):

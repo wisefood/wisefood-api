@@ -10,8 +10,17 @@ from fastapi import APIRouter, Depends, Query, Request
 from auth import auth
 from routers.generic import render
 from routers.households import verify_access
-from api.v1.meal_plans import MEAL_PLAN
-from schemas import MealPlanRevokeResponse, MealPlanResponse, MealPlanStoreRequest
+from api.v1.meal_plans import MEAL_PLAN, SAVED_MEAL_PLAN
+from schemas import (
+    MealPlanRevokeResponse,
+    MealPlanResponse,
+    MealPlanStoreRequest,
+    SavedMealPlanCreateRequest,
+    SavedMealPlanDeleteResponse,
+    SavedMealPlanListResponse,
+    SavedMealPlanResponse,
+    SavedMealPlanUpdateRequest,
+)
 
 
 router = APIRouter(prefix="/api/v1/members", tags=["Household Meal Plans"])
@@ -90,3 +99,114 @@ async def api_revoke_member_meal_plan(
         revoke_for_all_members=revoke_for_all_members,
     )
     return MealPlanRevokeResponse(**revoked)
+
+
+@router.get(
+    "/{member_id}/saved-meal-plans",
+    dependencies=[Depends(auth())],
+    summary="List a member's saved meal plans",
+    description="Returns the member's saved meal plans, newest first.",
+)
+@render()
+async def api_list_saved_meal_plans(request: Request, member_id: str):
+    await verify_access(request, None, member_id)
+
+    listing = await SAVED_MEAL_PLAN.list_for_member(member_id=member_id)
+    return SavedMealPlanListResponse(**listing)
+
+
+@router.post(
+    "/{member_id}/saved-meal-plans",
+    dependencies=[Depends(auth())],
+    summary="Save a meal plan to a member's library",
+    description=(
+        "Saves a meal plan under a name. Pass meal_plan_id to snapshot a stored "
+        "plan, or meal_plan to save meals directly. The saved copy is independent "
+        "of the stored plan, so revoking that plan does not remove it. Saving the "
+        "same source plan again renames the existing entry instead of duplicating it."
+    ),
+)
+@render()
+async def api_save_meal_plan(
+    request: Request,
+    member_id: str,
+    payload: SavedMealPlanCreateRequest,
+):
+    await verify_access(request, None, member_id)
+
+    saved = await SAVED_MEAL_PLAN.save(
+        member_id=member_id,
+        name=payload.name,
+        meal_plan_id=payload.meal_plan_id,
+        meal_plan_spec=(
+            payload.meal_plan.model_dump(exclude_none=True) if payload.meal_plan else None
+        ),
+    )
+    return SavedMealPlanResponse(**saved)
+
+
+@router.get(
+    "/{member_id}/saved-meal-plans/{saved_meal_plan_id}",
+    dependencies=[Depends(auth())],
+    summary="Get a saved meal plan",
+    description="Returns a single saved meal plan owned by the member.",
+)
+@render()
+async def api_get_saved_meal_plan(
+    request: Request,
+    member_id: str,
+    saved_meal_plan_id: str,
+):
+    await verify_access(request, None, member_id)
+
+    saved = await SAVED_MEAL_PLAN.get(
+        member_id=member_id,
+        saved_meal_plan_id=saved_meal_plan_id,
+    )
+    return SavedMealPlanResponse(**saved)
+
+
+@router.patch(
+    "/{member_id}/saved-meal-plans/{saved_meal_plan_id}",
+    dependencies=[Depends(auth())],
+    summary="Rename a saved meal plan",
+    description=(
+        "Renames a saved meal plan. The meals are a snapshot and are not editable."
+    ),
+)
+@render()
+async def api_rename_saved_meal_plan(
+    request: Request,
+    member_id: str,
+    saved_meal_plan_id: str,
+    payload: SavedMealPlanUpdateRequest,
+):
+    await verify_access(request, None, member_id)
+
+    saved = await SAVED_MEAL_PLAN.rename(
+        member_id=member_id,
+        saved_meal_plan_id=saved_meal_plan_id,
+        name=payload.name,
+    )
+    return SavedMealPlanResponse(**saved)
+
+
+@router.delete(
+    "/{member_id}/saved-meal-plans/{saved_meal_plan_id}",
+    dependencies=[Depends(auth())],
+    summary="Delete a saved meal plan",
+    description="Removes a saved meal plan from the member's library.",
+)
+@render()
+async def api_delete_saved_meal_plan(
+    request: Request,
+    member_id: str,
+    saved_meal_plan_id: str,
+):
+    await verify_access(request, None, member_id)
+
+    deleted = await SAVED_MEAL_PLAN.delete(
+        member_id=member_id,
+        saved_meal_plan_id=saved_meal_plan_id,
+    )
+    return SavedMealPlanDeleteResponse(**deleted)

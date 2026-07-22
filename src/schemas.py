@@ -1282,3 +1282,80 @@ class MealPlanRevokeResponse(BaseModel):
     revoked_for_member_id: str
     revoked_for_all_members: bool
     meal_plan_deleted: bool
+
+
+class SavedMealPlanCreateRequest(BaseModel):
+    """Save a plan to the member's library, either by id or by value."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Name the member files this plan under.",
+    )
+    meal_plan_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Id of an existing stored meal plan to snapshot. "
+            "Omit to save the meals supplied in meal_plan instead."
+        ),
+    )
+    meal_plan: Optional[MealPlanItem] = Field(
+        default=None,
+        description="Meals to save directly, when there is no stored plan to reference.",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("name must not be blank")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _ensure_source(self):
+        if self.meal_plan_id is None and self.meal_plan is None:
+            raise ValueError("Either meal_plan_id or meal_plan must be provided")
+        return self
+
+
+class SavedMealPlanUpdateRequest(BaseModel):
+    """Rename a saved plan. Only the name is mutable; the meals are a snapshot."""
+
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("name must not be blank")
+        return cleaned
+
+
+class SavedMealPlanResponse(BaseModel):
+    id: str
+    member_id: str
+    name: str
+    source_meal_plan_id: Optional[str] = None
+    source_applied_on: Optional[DateType] = None
+    breakfast: Dict[str, Any]
+    lunch: Dict[str, Any]
+    dinner: Dict[str, Any]
+    reasoning: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SavedMealPlanListResponse(BaseModel):
+    member_id: str
+    count: int
+    saved_meal_plans: List[SavedMealPlanResponse] = Field(default_factory=list)
+
+
+class SavedMealPlanDeleteResponse(BaseModel):
+    saved_meal_plan_id: str
+    member_id: str
+    deleted: bool

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
 from exceptions import ConflictError, DataError, NotFoundError
-from sql import HouseholdMember, MealPlan, MealPlanMember
+from sql import HouseholdMember, MealPlan, MealPlanMember, SavedMealPlan
 
 
 class MealPlanEntity:
@@ -300,4 +300,185 @@ class MealPlanEntity:
             }
 
 
+class SavedMealPlanEntity:
+    """
+    A member's named library of meal plans.
+
+    Entries are snapshots: saving copies the meals out of the scheduled plan, so
+    revoking that plan later leaves the library untouched. Only the name is
+    mutable afterwards.
+    """
+
+    @staticmethod
+    async def _get_member(db, member_id: str) -> HouseholdMember:
+        result = await db.execute(
+            select(HouseholdMember).where(HouseholdMember.id == member_id)
+        )
+        member = result.scalar_one_or_none()
+        if not member:
+            raise NotFoundError(detail=f"Household member {member_id} not found")
+        return member
+
+    @staticmethod
+    async def _get_owned(db, *, member_id: str, saved_meal_plan_id: str) -> SavedMealPlan:
+        result = await db.execute(
+            select(SavedMealPlan).where(
+                SavedMealPlan.id == saved_meal_plan_id,
+                SavedMealPlan.member_id == member_id,
+            )
+        )
+        saved = result.scalar_one_or_none()
+        if not saved:
+            raise NotFoundError(
+                detail=(
+                    f"Saved meal plan {saved_meal_plan_id} not found "
+                    f"for member {member_id}"
+                )
+            )
+        return saved
+
+    async def list_for_member(self, *, member_id: str) -> Dict[str, Any]:
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            await self._get_member(db, member_id)
+            result = await db.execute(
+                select(SavedMealPlan)
+                .where(SavedMealPlan.member_id == member_id)
+                .order_by(SavedMealPlan.created_at.desc(), SavedMealPlan.id.desc())
+            )
+            saved_plans = list(result.scalars().all())
+            return {
+                "member_id": member_id,
+                "count": len(saved_plans),
+                "saved_meal_plans": [plan.to_dict() for plan in saved_plans],
+            }
+
+    async def get(self, *, member_id: str, saved_meal_plan_id: str) -> Dict[str, Any]:
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            saved = await self._get_owned(
+                db, member_id=member_id, saved_meal_plan_id=saved_meal_plan_id
+            )
+            return saved.to_dict()
+
+    async def save(
+        self,
+        *,
+        member_id: str,
+        name: str,
+        meal_plan_id: Optional[str] = None,
+        meal_plan_spec: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            member = await self._get_member(db, member_id)
+
+            source_meal_plan_id: Optional[str] = None
+            source_applied_on: Optional[date] = None
+
+            if meal_plan_id:
+                plan_result = await db.execute(
+                    select(MealPlan)
+                    .options(selectinload(MealPlan.assignments))
+                    .where(MealPlan.id == meal_plan_id)
+                )
+                plan = plan_result.scalar_one_or_none()
+                if not plan:
+                    raise NotFoundError(detail=f"Meal plan {meal_plan_id} not found")
+
+                # Same ownership rule the revoke path enforces: the plan must
+                # belong to this member's household AND be assigned to them.
+                if plan.household_id != member.household_id:
+                    raise NotFoundError(
+                        detail=f"Meal plan {meal_plan_id} not found for member {member_id}"
+                    )
+                assigned = {a.member_id for a in plan.assignments}
+                if member_id not in assigned:
+                    raise NotFoundError(
+                        detail=f"Meal plan {meal_plan_id} not assigned to member {member_id}"
+                    )
+
+                breakfast = plan.breakfast or {}
+                lunch = plan.lunch or {}
+                dinner = plan.dinner or {}
+                reasoning = plan.reasoning
+                source_meal_plan_id = plan.id
+                source_applied_on = plan.applied_on
+            else:
+                spec = meal_plan_spec or {}
+                breakfast = spec.get("breakfast") or {}
+                lunch = spec.get("lunch") or {}
+                dinner = spec.get("dinner") or {}
+                reasoning = spec.get("reasoning")
+                # A plan supplied by value may still carry the upstream FoodChat
+                # id, which is what makes re-saving idempotent.
+                source_meal_plan_id = spec.get("id")
+
+            # Re-saving the same source plan renames the existing entry rather
+            # than filling the library with duplicates.
+            if source_meal_plan_id:
+                existing_result = await db.execute(
+                    select(SavedMealPlan).where(
+                        SavedMealPlan.member_id == member_id,
+                        SavedMealPlan.source_meal_plan_id == source_meal_plan_id,
+                    )
+                )
+                existing = existing_result.scalar_one_or_none()
+                if existing:
+                    existing.name = name
+                    existing.breakfast = breakfast
+                    existing.lunch = lunch
+                    existing.dinner = dinner
+                    existing.reasoning = reasoning
+                    if source_applied_on is not None:
+                        existing.source_applied_on = source_applied_on
+                    await db.commit()
+                    await db.refresh(existing)
+                    return existing.to_dict()
+
+            saved = SavedMealPlan(
+                id=str(uuid4()),
+                member_id=member_id,
+                name=name,
+                source_meal_plan_id=source_meal_plan_id,
+                source_applied_on=source_applied_on,
+                breakfast=breakfast,
+                lunch=lunch,
+                dinner=dinner,
+                reasoning=reasoning,
+            )
+            db.add(saved)
+            await db.commit()
+            await db.refresh(saved)
+            return saved.to_dict()
+
+    async def rename(
+        self, *, member_id: str, saved_meal_plan_id: str, name: str
+    ) -> Dict[str, Any]:
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            saved = await self._get_owned(
+                db, member_id=member_id, saved_meal_plan_id=saved_meal_plan_id
+            )
+            saved.name = name
+            await db.commit()
+            await db.refresh(saved)
+            return saved.to_dict()
+
+    async def delete(self, *, member_id: str, saved_meal_plan_id: str) -> Dict[str, Any]:
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            await self._get_owned(
+                db, member_id=member_id, saved_meal_plan_id=saved_meal_plan_id
+            )
+            await db.execute(
+                delete(SavedMealPlan).where(
+                    SavedMealPlan.id == saved_meal_plan_id,
+                    SavedMealPlan.member_id == member_id,
+                )
+            )
+            await db.commit()
+            return {
+                "saved_meal_plan_id": saved_meal_plan_id,
+                "member_id": member_id,
+                "deleted": True,
+            }
+
+
 MEAL_PLAN = MealPlanEntity()
+SAVED_MEAL_PLAN = SavedMealPlanEntity()
