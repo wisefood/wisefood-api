@@ -33,7 +33,11 @@ class PostgresConnectionSingleton:
     _sync_engine = None
     _async_session_factory: async_sessionmaker[AsyncSession] | None = None
     _sync_session_factory = None
-    _lock = threading.Lock()
+    # Reentrant: the session-factory getters call the engine getters while
+    # already holding this lock, which self-deadlocks on a plain Lock. In the
+    # app that stays hidden because startup builds the engine first, but any
+    # caller that reaches for a session before the engine hangs forever.
+    _lock = threading.RLock()
 
     @classmethod
     def get_async_engine(cls) -> AsyncEngine:
