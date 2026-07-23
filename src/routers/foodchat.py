@@ -315,6 +315,7 @@ async def apply_plan_parameters(
         session_id=session_id,
         member_id=payload.member_id,
         values=payload.values,
+        plan_type=payload.plan_type,
     )
 
 

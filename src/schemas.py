@@ -1111,6 +1111,13 @@ class FoodChatPlanParametersRequest(BaseModel):
         ...,
         description="Chosen values keyed by parameter (cooking_time, difficulty, goal)",
     )
+    plan_type: Optional[Literal["daily", "weekly"]] = Field(
+        default=None,
+        description=(
+            "The card's own address, echoed back from the card payload, so the "
+            "values refine the plan the card was rendered with. Omitted → active canvas."
+        ),
+    )
 
 
 class FoodChatUpdateDinersRequest(BaseModel):

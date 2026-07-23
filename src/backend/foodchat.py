@@ -365,11 +365,15 @@ class FoodChat:
         session_id: str,
         member_id: str,
         values: Dict[str, Any],
+        plan_type: Optional[str] = None,
     ):
         """Apply plan-parameter card values — generates like a chat turn."""
         return await cls.post(
             f"/foodchat/sessions/{session_id}/plan-parameters",
-            json={"member_id": member_id, "values": values},
+            json={
+                "member_id": member_id, "values": values,
+                "plan_type": plan_type,
+            },
             timeout=cls._extra_long_timeout(),
         )
 
