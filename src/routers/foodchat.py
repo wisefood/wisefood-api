@@ -293,6 +293,7 @@ async def compose_plan(
         session_id=session_id,
         member_id=payload.member_id,
         picks=[p.model_dump() for p in payload.picks],
+        plan_type=payload.plan_type,
         message=payload.message,
     )
 

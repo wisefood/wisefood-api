@@ -1078,10 +1078,11 @@ class FoodChatComposePick(BaseModel):
     meal_type: Literal["breakfast", "lunch", "dinner"]
     recipe_id: str
     title: Optional[str] = None
+    day: Optional[int] = Field(default=None, ge=1, le=7, description="Weekly plans only")
 
 
 class FoodChatComposeRequest(BaseModel):
-    """Request payload for completing a hand-started daily plan."""
+    """Request payload for completing a hand-started plan (daily or weekly)."""
     member_id: str = Field(
         ...,
         description="Household member ID that owns the FoodChat session",
@@ -1089,6 +1090,10 @@ class FoodChatComposeRequest(BaseModel):
     picks: List[FoodChatComposePick] = Field(
         ...,
         description="Hand-picked recipes to pin before FoodChat fills the rest",
+    )
+    plan_type: Literal["daily", "weekly"] = Field(
+        default="daily",
+        description="Which plan type to compose",
     )
     message: Optional[str] = Field(
         default=None,

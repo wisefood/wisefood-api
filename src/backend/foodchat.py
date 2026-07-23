@@ -346,12 +346,16 @@ class FoodChat:
         session_id: str,
         member_id: str,
         picks: List[Dict[str, Any]],
+        plan_type: str = "daily",
         message: Optional[str] = None,
     ):
         """Complete a hand-started plan — generates like a chat turn."""
         return await cls.post(
             f"/foodchat/sessions/{session_id}/compose",
-            json={"member_id": member_id, "picks": picks, "message": message},
+            json={
+                "member_id": member_id, "picks": picks,
+                "plan_type": plan_type, "message": message,
+            },
             timeout=cls._extra_long_timeout(),
         )
 
