@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from routers.generic import render
 from schemas import (
     FoodChatChatRequest,
+    FoodChatComposeRequest,
     FoodChatCreateSessionRequest,
     FoodChatFeedbackRequest,
     FoodChatMemoryDecisionRequest,
@@ -272,6 +273,27 @@ async def submit_memory_decision(
         member_id=payload.member_id,
         decision=payload.decision,
         suggestion=payload.suggestion.model_dump(),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/compose",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def compose_plan(
+    request: Request,
+    session_id: str,
+    payload: FoodChatComposeRequest,
+):
+    """Complete a hand-started daily plan: pin the user's picked recipes and
+    let FoodChat fill the remaining slots."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.compose_plan(
+        session_id=session_id,
+        member_id=payload.member_id,
+        picks=[p.model_dump() for p in payload.picks],
+        message=payload.message,
     )
 
 

@@ -341,6 +341,21 @@ class FoodChat:
         )
 
     @classmethod
+    async def compose_plan(
+        cls,
+        session_id: str,
+        member_id: str,
+        picks: List[Dict[str, Any]],
+        message: Optional[str] = None,
+    ):
+        """Complete a hand-started plan — generates like a chat turn."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/compose",
+            json={"member_id": member_id, "picks": picks, "message": message},
+            timeout=cls._extra_long_timeout(),
+        )
+
+    @classmethod
     async def apply_plan_parameters(
         cls,
         session_id: str,

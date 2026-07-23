@@ -1073,6 +1073,29 @@ class FoodChatMemoryDecisionRequest(BaseModel):
     )
 
 
+class FoodChatComposePick(BaseModel):
+    """One hand-picked recipe on the FoodChat manual-mode canvas."""
+    meal_type: Literal["breakfast", "lunch", "dinner"]
+    recipe_id: str
+    title: Optional[str] = None
+
+
+class FoodChatComposeRequest(BaseModel):
+    """Request payload for completing a hand-started daily plan."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    picks: List[FoodChatComposePick] = Field(
+        ...,
+        description="Hand-picked recipes to pin before FoodChat fills the rest",
+    )
+    message: Optional[str] = Field(
+        default=None,
+        description="Optional chat text sent alongside the picks",
+    )
+
+
 class FoodChatPlanParametersRequest(BaseModel):
     """Request payload for applying interactive plan-parameter card values."""
     member_id: str = Field(
