@@ -216,6 +216,18 @@ class RecipeWrangler:
         return await cls.post("/api/v1/recipes/profile", json=payload)
 
     @classmethod
+    async def recipe_details_batch(
+        cls,
+        recipe_ids: list[str],
+        region: Optional[str] = None,
+    ):
+        """Batch-resolve recipe ids to slim cards with per-serving macros."""
+        payload: dict = {"recipe_ids": recipe_ids}
+        if region:
+            payload["region"] = region
+        return await cls.post("/api/v1/recipes/details", json=payload)
+
+    @classmethod
     async def autocomplete_recipes(cls, q: str = "", limit: int = 8):
         """Autocomplete recipe titles from Elasticsearch."""
         return await cls.get(

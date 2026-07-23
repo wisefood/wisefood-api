@@ -16,6 +16,7 @@ from schemas import (
     RecipeBulkStatusRequest,
     RecipeCreateRequest,
     RecipeCreateResponse,
+    RecipeDetailsBatchRequest,
     RecipeDisableByQueryRequest,
     RecipeDisableRequest,
     RecipeRegionEnum,
@@ -174,6 +175,19 @@ async def param_search_recipes(
         sort_by=payload.sort_by,
         include_facets=payload.include_facets,
         include_disabled=payload.include_disabled,
+    )
+
+
+@router.post(
+    "/recipes/details",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def recipe_details_batch(payload: RecipeDetailsBatchRequest, request: Request):
+    """Batch-resolve recipe ids to slim cards (favourites hydrate through this)."""
+    return await RECIPEWRANGLER.recipe_details_batch(
+        recipe_ids=payload.recipe_ids,
+        region=payload.region,
     )
 
 

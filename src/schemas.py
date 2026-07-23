@@ -644,6 +644,20 @@ class RecipeSearchRequest(BaseModel):
     )
 
 
+class RecipeDetailsBatchRequest(BaseModel):
+    """Batch recipe-details lookup — resolves ids to slim cards with macros.
+
+    Mirrors RecipeWrangler's own limit of 1-30 ids per call; the UI chunks
+    larger sets client-side. This is what makes favourites resolve live rather
+    than from a stored snapshot.
+    """
+    recipe_ids: List[str] = Field(..., min_length=1, max_length=30)
+    region: Optional[str] = Field(
+        default=None,
+        description="Optional nutrition region selector (US, IE, HU, EU).",
+    )
+
+
 class RecipeParamSearchSortEnum(str, Enum):
     random = "random"
     title_asc = "title_asc"
