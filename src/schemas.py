@@ -169,6 +169,33 @@ class MemberFavoriteDeleteResponse(BaseModel):
     deleted: bool = Field(..., description="Whether a favorite was removed")
 
 
+# ---------- Member Saved Item (Library) Schemas ----------
+SavedItemType = Literal["recipe", "article", "guide", "textbook"]
+
+
+class MemberSavedItemResponse(BaseModel):
+    item_type: SavedItemType
+    item_ref: str = Field(
+        ...,
+        min_length=1,
+        max_length=512,
+        description="Opaque recipe id (recipe) or urn:<type>:<slug> (literature).",
+    )
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemberSavedItemListResponse(BaseModel):
+    member_id: str
+    count: int
+    saved_items: List[MemberSavedItemResponse] = Field(default_factory=list)
+
+
+class MemberSavedItemDeleteResponse(BaseModel):
+    deleted: bool = Field(..., description="Whether a saved item was removed")
+
+
 # ---------- Member Adapted Recipe Schemas ----------
 class MemberAdaptedRecipeStoreRequest(BaseModel):
     """Body for saving a member's adapted version of a recipe (upsert)."""

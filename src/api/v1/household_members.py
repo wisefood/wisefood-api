@@ -9,8 +9,8 @@ from sqlalchemy import select, delete
 from uuid import uuid4
 
 from entity import Entity
-from sql import HouseholdMember, HouseholdMemberProfile, Household, MemberAdaptedRecipe, MemberFavorite, AgeGroup, DietaryGroup
-from exceptions import NotFoundError, ConflictError
+from sql import HouseholdMember, HouseholdMemberProfile, Household, MemberAdaptedRecipe, MemberFavorite, MemberSavedItem, AgeGroup, DietaryGroup
+from exceptions import NotFoundError, ConflictError, DataError
 from schemas import HouseholdMemberResponse, HouseholdMemberCreate, HouseholdMemberUpdate
 from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
 from backend.redis import REDIS
@@ -473,7 +473,101 @@ class HouseholdMemberEntity(Entity):
             _profile_cache_invalidate(member_id)
             return result.rowcount > 0
 
-    # ========== Member Favorite Operations ==========
+    # ========== Member Saved Item (Library) Operations ==========
+    #
+    # The library is one typed table (MemberSavedItem). Recipe favourites are
+    # just item_type='recipe' rows in it, so the /favorites methods below are a
+    # recipe-only view that keeps the old contract for FoodChat / RecipeWrangler
+    # while the generic saved-item methods serve every type.
+
+    @staticmethod
+    def _validate_item_type(item_type: str) -> str:
+        if item_type not in MemberSavedItem.ALLOWED_TYPES:
+            raise DataError(
+                detail=(
+                    f"Unsupported saved item type '{item_type}'. "
+                    f"Allowed: {', '.join(sorted(MemberSavedItem.ALLOWED_TYPES))}."
+                )
+            )
+        return item_type
+
+    async def list_saved_items(
+        self,
+        member_id: str,
+        item_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        List a member's saved items, newest first, optionally filtered by type.
+        """
+        if item_type is not None:
+            self._validate_item_type(item_type)
+
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            query = select(MemberSavedItem).where(MemberSavedItem.member_id == member_id)
+            if item_type is not None:
+                query = query.where(MemberSavedItem.item_type == item_type)
+            result = await db.execute(query.order_by(MemberSavedItem.created_at.desc()))
+            return [i.to_dict() for i in result.scalars().all()]
+
+    async def add_saved_item(
+        self,
+        member_id: str,
+        item_type: str,
+        item_ref: str,
+    ) -> Dict[str, Any]:
+        """
+        Add an item to a member's library (idempotent).
+
+        Re-adding an existing item returns the existing row unchanged.
+        """
+        self._validate_item_type(item_type)
+
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                select(MemberSavedItem).where(
+                    MemberSavedItem.member_id == member_id,
+                    MemberSavedItem.item_type == item_type,
+                    MemberSavedItem.item_ref == item_ref,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                return existing.to_dict()
+
+            saved = MemberSavedItem(
+                member_id=member_id, item_type=item_type, item_ref=item_ref
+            )
+            db.add(saved)
+            await db.flush()
+            saved_dict = saved.to_dict()
+            await db.commit()
+            return saved_dict
+
+    async def remove_saved_item(
+        self,
+        member_id: str,
+        item_type: str,
+        item_ref: str,
+    ) -> bool:
+        """
+        Remove an item from a member's library (idempotent).
+
+        :return: True if a row was deleted, False if it did not exist.
+        """
+        self._validate_item_type(item_type)
+
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            result = await db.execute(
+                delete(MemberSavedItem).where(
+                    MemberSavedItem.member_id == member_id,
+                    MemberSavedItem.item_type == item_type,
+                    MemberSavedItem.item_ref == item_ref,
+                )
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    # ---------- Recipe-only favourites view (legacy contract) ----------
 
     async def list_favorites(
         self,
@@ -482,16 +576,19 @@ class HouseholdMemberEntity(Entity):
         """
         List a member's favorite recipes, newest first.
 
-        :param member_id: The member ID
-        :return: List of favorite dictionaries
+        Recipe rows of the library, in the legacy {recipe_id, created_at} shape
+        FoodChat and RecipeWrangler consume.
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
             result = await db.execute(
-                select(MemberFavorite)
-                .where(MemberFavorite.member_id == member_id)
-                .order_by(MemberFavorite.created_at.desc())
+                select(MemberSavedItem)
+                .where(
+                    MemberSavedItem.member_id == member_id,
+                    MemberSavedItem.item_type == MemberSavedItem.RECIPE,
+                )
+                .order_by(MemberSavedItem.created_at.desc())
             )
-            return [f.to_dict() for f in result.scalars().all()]
+            return [f.to_favorite_dict() for f in result.scalars().all()]
 
     async def add_favorite(
         self,
@@ -501,29 +598,27 @@ class HouseholdMemberEntity(Entity):
         """
         Add a recipe to a member's favorites (idempotent).
 
-        Re-adding an existing favorite returns the existing row unchanged.
-
         :param member_id: The member ID
         :param recipe_id: Opaque RecipeWrangler recipe ID
-        :return: Favorite dictionary
+        :return: Favorite dictionary in the legacy shape
         """
+        await self.add_saved_item(
+            member_id=member_id,
+            item_type=MemberSavedItem.RECIPE,
+            item_ref=recipe_id,
+        )
+        # Re-read so the returned created_at reflects the stored row on both the
+        # insert and the idempotent-hit path.
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
             result = await db.execute(
-                select(MemberFavorite).where(
-                    MemberFavorite.member_id == member_id,
-                    MemberFavorite.recipe_id == recipe_id,
+                select(MemberSavedItem).where(
+                    MemberSavedItem.member_id == member_id,
+                    MemberSavedItem.item_type == MemberSavedItem.RECIPE,
+                    MemberSavedItem.item_ref == recipe_id,
                 )
             )
-            existing = result.scalar_one_or_none()
-            if existing:
-                return existing.to_dict()
-
-            favorite = MemberFavorite(member_id=member_id, recipe_id=recipe_id)
-            db.add(favorite)
-            await db.flush()
-            favorite_dict = favorite.to_dict()
-            await db.commit()
-            return favorite_dict
+            saved = result.scalar_one()
+            return saved.to_favorite_dict()
 
     async def remove_favorite(
         self,
@@ -533,19 +628,13 @@ class HouseholdMemberEntity(Entity):
         """
         Remove a recipe from a member's favorites (idempotent).
 
-        :param member_id: The member ID
-        :param recipe_id: Opaque RecipeWrangler recipe ID
         :return: True if a favorite was deleted, False if it did not exist
         """
-        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
-            result = await db.execute(
-                delete(MemberFavorite).where(
-                    MemberFavorite.member_id == member_id,
-                    MemberFavorite.recipe_id == recipe_id,
-                )
-            )
-            await db.commit()
-            return result.rowcount > 0
+        return await self.remove_saved_item(
+            member_id=member_id,
+            item_type=MemberSavedItem.RECIPE,
+            item_ref=recipe_id,
+        )
 
     # ========== Member Adapted Recipe Operations ==========
 
@@ -660,3 +749,13 @@ class HouseholdMemberEntity(Entity):
 
 # Singleton instance
 HOUSEHOLD_MEMBER = HouseholdMemberEntity()
+
+# The entity's type guard (MemberSavedItem.ALLOWED_TYPES) and the API contract
+# (schemas.SavedItemType) list the same types in two files that cannot import
+# each other. Fail loudly at import time if they drift apart.
+from typing import get_args as _get_args  # noqa: E402
+from schemas import SavedItemType as _SavedItemType  # noqa: E402
+
+assert set(_get_args(_SavedItemType)) == set(MemberSavedItem.ALLOWED_TYPES), (
+    "SavedItemType (schemas) and MemberSavedItem.ALLOWED_TYPES (sql) disagree"
+)

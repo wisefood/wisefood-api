@@ -3,7 +3,8 @@ Household Member management endpoints (independent entity)
 """
 
 from typing import Dict, Any
-from fastapi import APIRouter, Depends, Path, Request
+from typing import Optional
+from fastapi import APIRouter, Depends, Path, Query, Request
 import kutils
 import logging
 from auth import auth
@@ -21,6 +22,9 @@ from schemas import (
     MemberAdaptedRecipeStoreRequest,
     MemberFavoriteResponse,
     MemberFavoriteDeleteResponse,
+    MemberSavedItemResponse,
+    MemberSavedItemListResponse,
+    MemberSavedItemDeleteResponse,
 )
 from api.v1.household_members import HOUSEHOLD_MEMBER
 from routers.households import verify_access
@@ -293,6 +297,91 @@ async def api_delete_member_favorite(
     deleted = await HOUSEHOLD_MEMBER.remove_favorite(member_id, recipe_id)
 
     return MemberFavoriteDeleteResponse(deleted=deleted)
+
+
+# ========== Household Member Saved Items (Library) Endpoints ==========
+# The typed library. Recipes saved here are the same rows the /favorites
+# endpoints above serve; these also carry literature (articles, guides,
+# textbooks). Owner-scoped exactly like favourites.
+
+
+@router.get(
+    "/{member_id}/saved-items",
+    dependencies=[Depends(auth())],
+    summary="List a member's saved library items",
+    description=(
+        "List a member's saved items, newest first. Pass ?item_type= to filter "
+        "to one type (recipe, article, guide, textbook). User must be the "
+        "household owner or admin."
+    ),
+)
+@render()
+async def api_list_member_saved_items(
+    request: Request,
+    member_id: str,
+    item_type: Optional[str] = Query(
+        default=None,
+        description="Optional type filter: recipe, article, guide, or textbook.",
+    ),
+):
+    await verify_access(request, None, member_id)
+
+    items = await HOUSEHOLD_MEMBER.list_saved_items(member_id, item_type=item_type)
+    return MemberSavedItemListResponse(
+        member_id=member_id,
+        count=len(items),
+        saved_items=[MemberSavedItemResponse(**i) for i in items],
+    )
+
+
+@router.put(
+    "/{member_id}/saved-items/{item_type}/{item_ref:path}",
+    dependencies=[Depends(auth())],
+    summary="Save an item to a member's library",
+    description=(
+        "Idempotently save an item. item_type is recipe, article, guide, or "
+        "textbook; item_ref is the opaque recipe id or a urn:<type>:<slug>. "
+        "Re-saving returns the existing entry. User must be the household owner "
+        "or admin."
+    ),
+)
+@render()
+async def api_add_member_saved_item(
+    request: Request,
+    member_id: str,
+    item_type: str = Path(..., min_length=1, max_length=32),
+    item_ref: str = Path(
+        ...,
+        min_length=1,
+        max_length=512,
+        description="Opaque recipe id or urn:<type>:<slug>.",
+    ),
+):
+    await verify_access(request, None, member_id)
+
+    saved = await HOUSEHOLD_MEMBER.add_saved_item(member_id, item_type, item_ref)
+    return MemberSavedItemResponse(**saved)
+
+
+@router.delete(
+    "/{member_id}/saved-items/{item_type}/{item_ref:path}",
+    dependencies=[Depends(auth())],
+    summary="Remove an item from a member's library",
+    description=(
+        "Idempotently remove a saved item. User must be the household owner or admin."
+    ),
+)
+@render()
+async def api_delete_member_saved_item(
+    request: Request,
+    member_id: str,
+    item_type: str = Path(..., min_length=1, max_length=32),
+    item_ref: str = Path(..., min_length=1, max_length=512),
+):
+    await verify_access(request, None, member_id)
+
+    deleted = await HOUSEHOLD_MEMBER.remove_saved_item(member_id, item_type, item_ref)
+    return MemberSavedItemDeleteResponse(deleted=deleted)
 
 
 # ========== Household Member Adapted Recipes Endpoints ==========

@@ -180,6 +180,9 @@ class HouseholdMember(Base):
     saved_meal_plans: Mapped[List["SavedMealPlan"]] = relationship(
         "SavedMealPlan", back_populates="member", cascade="all, delete-orphan"
     )
+    saved_items: Mapped[List["MemberSavedItem"]] = relationship(
+        "MemberSavedItem", back_populates="member", cascade="all, delete-orphan"
+    )
 
     def to_dict(self, include_profile: bool = False) -> dict:
         result = {
@@ -264,6 +267,61 @@ class MemberFavorite(Base):
     def to_dict(self) -> dict:
         return {
             "recipe_id": self.recipe_id,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+class MemberSavedItem(Base):
+    """
+    A typed entry in a member's library.
+
+    Generalises MemberFavorite: item_type says what kind of asset item_ref
+    points at ('recipe' -> opaque RecipeWrangler id; 'article'/'guide'/
+    'textbook' -> a urn:<type>:<slug> catalog handle). The gateway treats
+    item_ref as opaque. Recipe rows are the same data the /favorites endpoints
+    serve, so those keep working as a recipe-only view over this table.
+    """
+
+    # Types accepted today. Kept deliberately small; adding one is a code change
+    # here plus (for literature) a UI affordance, but needs no migration.
+    RECIPE = "recipe"
+    ALLOWED_TYPES = frozenset({"recipe", "article", "guide", "textbook"})
+
+    __tablename__ = "member_saved_item"
+    __table_args__ = (
+        Index("ix_member_saved_item_member_created", "member_id", "created_at"),
+        Index("ix_member_saved_item_member_type", "member_id", "item_type"),
+        {"schema": "wisefood"},
+    )
+
+    member_id = mapped_column(
+        String(100),
+        ForeignKey("wisefood.household_member.id", ondelete="CASCADE", onupdate="CASCADE"),
+        primary_key=True,
+    )
+    item_type = mapped_column(String(32), primary_key=True)
+    item_ref = mapped_column(String(512), primary_key=True)
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    member: Mapped["HouseholdMember"] = relationship(
+        "HouseholdMember", back_populates="saved_items"
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "item_type": self.item_type,
+            "item_ref": self.item_ref,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    def to_favorite_dict(self) -> dict:
+        """Legacy shape for the recipe-only /favorites endpoints."""
+        return {
+            "recipe_id": self.item_ref,
             "created_at": self.created_at.isoformat(),
         }
 
