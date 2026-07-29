@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Query, Request, Depends
 from routers.generic import render
-from typing import Optional
+from typing import List, Optional
 import logging
 from auth import auth
 from schemas import (
+    ArticleEnrichmentBatchRequest,
+    ArticleEnrichmentRequest,
     ArticleInput,
     ChatRequest,
+    EnrichmentSweeperPauseRequest,
     # Memory nudge payloads are deliberately the same shape in both apps —
     # the FoodChat* models double as FoodScholar's.
     FoodChatMemoryDecisionRequest,
@@ -115,6 +118,94 @@ async def enrich_article(request: Request, body: ArticleInput):
         abstract=body.abstract,
         authors=body.authors
     )
+
+
+# --------------------------------------------------------------------------- #
+# Selective enrichment (console operations)
+#
+# These drive the article catalog's enrichment from the console: enrich one or
+# more articles on demand, inspect per-article state, and pause the background
+# sweeper. Admin/expert only — they mutate catalog records and cost LLM calls.
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/enrich/articles",
+    dependencies=[Depends(auth("admin,expert"))],
+    status_code=202,
+)
+@render()
+async def enqueue_articles_enrichment(
+    request: Request, body: ArticleEnrichmentBatchRequest
+):
+    user = kutils.current_user(request)
+    return await FOODSCHOLAR.enqueue_articles_enrichment(
+        {
+            "urns": body.urns,
+            "force": body.force,
+            "requested_by": user["sub"],
+        }
+    )
+
+
+@router.get("/enrich/jobs", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def get_articles_enrichment_status(
+    request: Request,
+    urns: List[str] = Query(
+        default=[], description="Article URNs to look up (repeat per URN)"
+    ),
+):
+    return await FOODSCHOLAR.get_article_enrichment_statuses(urns)
+
+
+@router.get("/enrich/worker", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def get_enrichment_worker_status(request: Request):
+    return await FOODSCHOLAR.get_enrichment_worker_status()
+
+
+@router.post("/enrich/worker/pause", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def set_enrichment_sweeper_paused(
+    request: Request, body: EnrichmentSweeperPauseRequest
+):
+    return await FOODSCHOLAR.set_enrichment_sweeper_paused(body.paused)
+
+
+@router.post(
+    "/enrich/articles/{urn:path}",
+    dependencies=[Depends(auth("admin,expert"))],
+    status_code=202,
+)
+@render()
+async def enqueue_article_enrichment(
+    request: Request, urn: str, body: Optional[ArticleEnrichmentRequest] = None
+):
+    user = kutils.current_user(request)
+    return await FOODSCHOLAR.enqueue_article_enrichment(
+        urn,
+        {
+            "force": bool(body.force) if body else False,
+            "requested_by": user["sub"],
+        },
+    )
+
+
+@router.get(
+    "/enrich/articles/{urn:path}", dependencies=[Depends(auth("admin,expert"))]
+)
+@render()
+async def get_article_enrichment_status(request: Request, urn: str):
+    return await FOODSCHOLAR.get_article_enrichment_status(urn)
+
+
+@router.delete(
+    "/enrich/articles/{urn:path}", dependencies=[Depends(auth("admin,expert"))]
+)
+@render()
+async def reset_article_enrichment(request: Request, urn: str):
+    return await FOODSCHOLAR.reset_article_enrichment(urn)
 
 
 @router.post(

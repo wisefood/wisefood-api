@@ -190,6 +190,37 @@ class FoodScholar:
         return await FOODSCHOLAR.get("/api/v1/qa/tips", params=params)
 
     @classmethod
+    async def enqueue_article_enrichment(cls, urn: str, payload: dict):
+        """Queue selective enrichment for a single catalog article."""
+        return await cls.post(f"/api/v1/enrich/articles/{urn}", json=payload)
+
+    @classmethod
+    async def enqueue_articles_enrichment(cls, payload: dict):
+        """Queue selective enrichment for several catalog articles."""
+        return await cls.post("/api/v1/enrich/articles", json=payload)
+
+    @classmethod
+    async def get_article_enrichment_status(cls, urn: str):
+        return await cls.get(f"/api/v1/enrich/articles/{urn}")
+
+    @classmethod
+    async def get_article_enrichment_statuses(cls, urns: list[str]):
+        # FoodScholar expects the parameter repeated once per URN.
+        return await cls.get("/api/v1/enrich/jobs", params={"urns": urns})
+
+    @classmethod
+    async def reset_article_enrichment(cls, urn: str):
+        return await cls.delete(f"/api/v1/enrich/articles/{urn}")
+
+    @classmethod
+    async def get_enrichment_worker_status(cls):
+        return await cls.get("/api/v1/enrich/worker")
+
+    @classmethod
+    async def set_enrichment_sweeper_paused(cls, paused: bool):
+        return await cls.post("/api/v1/enrich/worker/pause", json={"paused": paused})
+
+    @classmethod
     async def get_guideline_storage(cls, artifact_uuid: str):
         return await cls.get(f"/api/v1/guidelines/storage/{artifact_uuid}")
 

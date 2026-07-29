@@ -363,6 +363,34 @@ class GuidelineImportRequest(BaseModel):
     )
 
 
+class ArticleEnrichmentRequest(BaseModel):
+    """Options for queuing selective enrichment of a catalog article."""
+
+    force: bool = Field(
+        default=False,
+        description="Re-enrich even if the article was already processed",
+    )
+
+
+class ArticleEnrichmentBatchRequest(ArticleEnrichmentRequest):
+    """Options for queuing selective enrichment of several catalog articles."""
+
+    urns: List[str] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Article URNs to enrich",
+    )
+
+
+class EnrichmentSweeperPauseRequest(BaseModel):
+    """Pause or resume the FoodScholar catalog enrichment sweeper."""
+
+    paused: bool = Field(
+        ..., description="True to pause the sweeper, False to resume it"
+    )
+
+
 class QAModeEnum(str, Enum):
     simple = "simple"
     advanced = "advanced"
