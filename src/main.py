@@ -193,6 +193,33 @@ api.add_middleware(
     expose_headers=["Content-Length"],# optionally expose headers to browser
 )
 
+# Populate the RecipeWrangler proxy's identity context for each request.
+#
+# RecipeWrangler does no authentication — it trusts this service to have
+# verified the token and to say who the caller is. Doing this as middleware
+# rather than per-route means a newly added proxied endpoint forwards identity
+# by default instead of by someone remembering to.
+#
+# Decoding here is best-effort and never rejects: authorization remains the
+# `Depends(auth(...))` on each route. An absent or unreadable token simply
+# makes the downstream call anonymous, which RecipeWrangler handles by hiding
+# creator attribution and withdrawn recipes.
+@api.middleware("http")
+async def rw_identity_middleware(request, call_next):
+    from backend.recipewrangler import CURRENT_TOKEN_PAYLOAD
+    import kutils
+
+    try:
+        token = kutils.current_user(request)
+    except Exception:
+        token = None
+    reset = CURRENT_TOKEN_PAYLOAD.set(token)
+    try:
+        return await call_next(request)
+    finally:
+        CURRENT_TOKEN_PAYLOAD.reset(reset)
+
+
 # Initialize exception handlers
 install_error_handler(api)
 

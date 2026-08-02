@@ -1,10 +1,21 @@
 import httpx
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
 from main import config
 from exceptions import APIException
 import logging
 
 logger = logging.getLogger(__name__)
+
+# The verified token payload for the in-flight request.
+#
+# Set by the identity middleware in main.py and read by `_request`, so every
+# proxied call forwards the caller automatically. The alternative was threading
+# a `headers=` argument through all eighteen routes, which fails the moment
+# someone adds a nineteenth and forgets.
+CURRENT_TOKEN_PAYLOAD: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "rw_current_token_payload", default=None
+)
 
 
 def _raise_for_upstream(response: httpx.Response) -> None:
@@ -67,12 +78,52 @@ class RecipeWrangler:
             )
         return cls
 
+    @staticmethod
+    def identity_headers(token_payload: Optional[Dict[str, Any]]) -> Dict[str, str]:
+        """Identity headers for a downstream RecipeWrangler call.
+
+        RecipeWrangler performs no authentication of its own — this service
+        has already verified the token, so it forwards the result. Without
+        these headers every downstream caller is anonymous: writes record no
+        creator, and `creator` plus withdrawn recipes stay hidden.
+
+        Roles are taken from the same resolution this service uses for its own
+        authorization (`auth._extract_roles`: realm_access.roles merged with
+        resource_access[client].roles, lowercased), so the two cannot disagree
+        about who an expert is.
+
+        Only safe while RecipeWrangler is ClusterIP-only. If it is ever exposed
+        through an ingress these become spoofable and must be replaced with
+        token verification downstream.
+        """
+        if not token_payload:
+            return {}
+        from auth import _extract_roles
+
+        headers: Dict[str, str] = {}
+        sub = str(token_payload.get("sub") or "").strip()
+        if sub:
+            headers["X-User-Sub"] = sub
+        username = str(token_payload.get("preferred_username") or "").strip()
+        if username:
+            headers["X-User-Name"] = username
+        roles = _extract_roles(token_payload)
+        if roles:
+            headers["X-User-Roles"] = ",".join(roles)
+        return headers
+
     @classmethod
     async def _request(cls, method: str, endpoint: str, **kwargs) -> httpx.Response:
         if cls._client is None:
             raise RuntimeError(
                 "RecipeWrangler client not initialized. Call get_client() first."
             )
+        # Forward who is asking. RecipeWrangler authenticates nobody; it
+        # trusts this service to have done so.
+        identity = cls.identity_headers(CURRENT_TOKEN_PAYLOAD.get())
+        if identity:
+            kwargs['headers'] = {**identity, **(kwargs.get('headers') or {})}
+
         try:
             response = await cls._client.request(method, endpoint, **kwargs)
         except httpx.TimeoutException as exc:
@@ -144,6 +195,23 @@ class RecipeWrangler:
             params=params or None,
         )
 
+    # Filter fields forwarded verbatim on both search paths.
+    #
+    # Listed once rather than spelled out per method: every one of these had to
+    # be added in four places (schema, route, method signature, payload dict),
+    # and the facet filters were silently dropped for exactly that reason —
+    # a field absent from the payload dict reaches RecipeWrangler as "no
+    # filter", so the request succeeds and quietly ignores what was asked.
+    _FILTER_FIELDS = (
+        "dish_types",
+        "sources",
+        "cuisines",
+        "moods",
+        "flavor_profiles",
+        "food_groups",
+        "require_diet_tags",
+    )
+
     @classmethod
     async def search_recipes(
         cls,
@@ -152,6 +220,8 @@ class RecipeWrangler:
         diet_tags: list[str] = None,
         preferred_ingredients: list[str] = None,
         region: str = None,
+        include_disabled: bool = False,
+        **filters,
     ):
         """Search recipes via the knowledge graph."""
         payload = {
@@ -162,6 +232,13 @@ class RecipeWrangler:
         }
         if region:
             payload["region"] = region
+        if include_disabled:
+            payload["include_disabled"] = True
+        # Only non-empty filters go out. An empty list is not a constraint, and
+        # omitting it keeps the request readable in the RecipeWrangler logs.
+        payload.update(
+            {name: filters[name] for name in cls._FILTER_FIELDS if filters.get(name)}
+        )
         return await cls.post("/api/v1/recipes/search", json=payload)
 
     @classmethod
@@ -179,6 +256,7 @@ class RecipeWrangler:
         sort_by: str = "title_asc",
         include_facets: bool = False,
         include_disabled: bool = False,
+        **filters,
     ):
         """Run deterministic parameter-based recipe search."""
         payload = {
@@ -195,6 +273,9 @@ class RecipeWrangler:
             "include_facets": include_facets,
             "include_disabled": include_disabled,
         }
+        payload.update(
+            {name: filters[name] for name in cls._FILTER_FIELDS if filters.get(name)}
+        )
         return await cls.post("/api/v1/recipes/param_search", json=payload)
 
     @classmethod
@@ -239,6 +320,63 @@ class RecipeWrangler:
     async def count_recipes(cls):
         """Return the total number of recipes in the graph."""
         return await cls.get("/api/v1/recipes/count")
+
+    # ------------------------------------------------------------------
+    # Catalog (RecipeWrangler /api/v2/recipes)
+    #
+    # The v1 recipe routes read Neo4j, which has never held the annotation
+    # facets — cuisine, mood, flavour, food group live only on the catalog
+    # index. A client that needs them has no way to get there through the v1
+    # surface, which is why the recipe page could not show a cuisine it had
+    # already been classified with.
+    #
+    # These proxy RecipeWrangler's v2 catalog contract unchanged. They stay
+    # under this service's own /api/v1 prefix: the version in our path is our
+    # contract with the UI, not RecipeWrangler's with us.
+    # ------------------------------------------------------------------
+
+    @classmethod
+    async def catalog_search(cls, payload: Dict[str, Any]):
+        """Search the catalog index (q/fq/fl/sort/facets contract)."""
+        return await cls.post("/api/v2/recipes/search", json=payload)
+
+    @classmethod
+    async def catalog_facets(cls):
+        """List every field the catalog index can facet on."""
+        return await cls.get("/api/v2/recipes/facets")
+
+    @classmethod
+    async def catalog_browse(
+        cls,
+        *,
+        course_type: Optional[str] = None,
+        cuisine: Optional[str] = None,
+        source: Optional[str] = None,
+        q: Optional[str] = None,
+        limit: int = 24,
+        offset: int = 0,
+    ):
+        """Browse the catalog by category."""
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if course_type:
+            params["course_type"] = course_type
+        if cuisine:
+            params["cuisine"] = cuisine
+        if source:
+            params["source"] = source
+        if q:
+            params["q"] = q
+        return await cls.get("/api/v2/recipes/browse", params=params)
+
+    @classmethod
+    async def catalog_vocabulary(cls):
+        """The closed value sets the UI should offer instead of free text."""
+        return await cls.get("/api/v2/recipes/vocabulary")
+
+    @classmethod
+    async def catalog_get_recipe(cls, recipe_id: str):
+        """Fetch one recipe document from the catalog index."""
+        return await cls.get(f"/api/v2/recipes/{recipe_id}")
 
     @classmethod
     async def create_recipe(cls, payload: Dict[str, Any]):

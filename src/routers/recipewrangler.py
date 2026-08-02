@@ -6,6 +6,7 @@ from backend.recipewrangler import RECIPEWRANGLER
 from budget import guest_budget
 from exceptions import AuthorizationError
 from schemas import (
+    CatalogSearchRequest,
     RecipeAdaptSimulateRequest,
     RecipeAdaptSimulateResponse,
     RecipeAdaptSuggestionsRequest,
@@ -88,6 +89,85 @@ async def get_recipe_count(request: Request):
     return await RECIPEWRANGLER.count_recipes()
 
 
+# ----------------------------------------------------------------------
+# Catalog passthrough — RecipeWrangler's /api/v2/recipes surface.
+#
+# The /recipes/* routes above read Neo4j. The annotation facets (cuisine,
+# mood, flavour, food group) are Elasticsearch-owned and exist only on the
+# catalog index, so no v1 route can return them however it is called — which
+# is why they were unreachable from the UI entirely.
+#
+# `/catalog/{recipe_id}` is declared last on purpose: FastAPI matches in
+# declaration order, so a path parameter registered before /facets, /browse
+# or /vocabulary would swallow them and proxy "facets" as a recipe id.
+# ----------------------------------------------------------------------
+
+
+@router.post("/catalog/search", dependencies=[Depends(guest_budget("search"))])
+@render()
+async def catalog_search(
+    payload: CatalogSearchRequest,
+    request: Request,
+    user: dict = Depends(auth()),
+):
+    """Search the catalog index. Returns {results, facets, total, max_result_window}."""
+    # Gated exactly as include_disabled is on the v1 search paths. RecipeWrangler
+    # scopes visibility from the forwarded identity as well, but refusing here
+    # gives the caller a real 403 instead of silently narrowed results.
+    if payload.include_inactive:
+        _require_console_roles(user, "include_inactive")
+    return await RECIPEWRANGLER.catalog_search(payload.model_dump())
+
+
+@router.get("/catalog/facets", dependencies=[Depends(auth())])
+@render()
+async def catalog_facets(request: Request):
+    """List every field that can be passed in `facets` on catalog search."""
+    return await RECIPEWRANGLER.catalog_facets()
+
+
+@router.get("/catalog/browse", dependencies=[Depends(auth())])
+@render()
+async def catalog_browse(
+    request: Request,
+    course_type: str | None = Query(
+        default=None, description="e.g. desserts, main-dish, soup"
+    ),
+    cuisine: str | None = Query(default=None, description="e.g. italian, thai"),
+    source: str | None = Query(default=None, description="Canonical source slug"),
+    q: str | None = Query(default=None, description="Optional free-text query"),
+    limit: int = Query(default=24, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Browse the catalog by category."""
+    return await RECIPEWRANGLER.catalog_browse(
+        course_type=course_type,
+        cuisine=cuisine,
+        source=source,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/catalog/vocabulary", dependencies=[Depends(auth())])
+@render()
+async def catalog_vocabulary(request: Request):
+    """The closed value sets the UI should offer instead of free text."""
+    return await RECIPEWRANGLER.catalog_vocabulary()
+
+
+@router.get("/catalog/{recipe_id}", dependencies=[Depends(auth())])
+@render()
+async def catalog_get_recipe(recipe_id: str, request: Request):
+    """Fetch one recipe document from the catalog index.
+
+    Carries the annotation facets the v1 detail route cannot: `cuisines`,
+    `moods`, `flavor_profiles`, `food_groups`.
+    """
+    return await RECIPEWRANGLER.catalog_get_recipe(recipe_id)
+
+
 @router.get("/recipes/{recipe_id}")
 @render()
 async def get_recipe(
@@ -135,17 +215,35 @@ async def update_recipe(
 
 @router.post(
     "/recipes/search",
-    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+    dependencies=[Depends(guest_budget("search"))],
 )
 @render()
-async def search_recipes(payload: RecipeSearchRequest, request: Request):
+async def search_recipes(
+    payload: RecipeSearchRequest,
+    request: Request,
+    user: dict = Depends(auth()),
+):
     """Search recipes via the knowledge graph."""
+    # Gated exactly as on /recipes/param_search. Withdrawn recipes are visible
+    # to the console, and a text search is how an expert actually finds one —
+    # leaving this ungated here would make the param_search gate decorative.
+    if payload.include_disabled:
+        _require_console_roles(user, "include_disabled")
     return await RECIPEWRANGLER.search_recipes(
         question=payload.question,
         exclude_allergens=payload.exclude_allergens,
         diet_tags=payload.diet_tags,
         preferred_ingredients=payload.preferred_ingredients,
         region=payload.region,
+        include_disabled=payload.include_disabled,
+        # Forwarded by name from the request model. Anything in
+        # RECIPEWRANGLER._FILTER_FIELDS that the model also declares goes
+        # through, so adding a facet is a schema change only.
+        **{
+            name: getattr(payload, name)
+            for name in RECIPEWRANGLER._FILTER_FIELDS
+            if getattr(payload, name, None)
+        },
     )
 
 
@@ -175,6 +273,14 @@ async def param_search_recipes(
         sort_by=payload.sort_by,
         include_facets=payload.include_facets,
         include_disabled=payload.include_disabled,
+        # Same name-driven forwarding as /recipes/search, minus the fields
+        # already passed by name above — repeating one would be a duplicate
+        # keyword argument, not a harmless overwrite.
+        **{
+            name: getattr(payload, name)
+            for name in RECIPEWRANGLER._FILTER_FIELDS
+            if name not in {"sources", "dish_types"} and getattr(payload, name, None)
+        },
     )
 
 

@@ -670,6 +670,43 @@ class RecipeSearchRequest(BaseModel):
         default=None,
         description="Region whose nutri-score the result cards carry: US, IE, HU, or EU"
     )
+    dish_types: List[str] = Field(
+        default_factory=list,
+        description="Course/dish-type filter selected by the caller (e.g. ['main-dish'])",
+    )
+    sources: List[str] = Field(
+        default_factory=list,
+        description="Restrict to these recipe collections (e.g. ['myplate'])",
+    )
+    # Annotation facets. Closed vocabularies owned by RecipeWrangler
+    # (`catalog.vocabularies`); this layer forwards them without opinion, so a
+    # vocabulary added downstream needs no change here.
+    cuisines: List[str] = Field(
+        default_factory=list,
+        description="Cuisine filter (e.g. ['italian', 'thai'])",
+    )
+    moods: List[str] = Field(
+        default_factory=list,
+        description="Eating-occasion filter (e.g. ['comfort', 'quick'])",
+    )
+    flavor_profiles: List[str] = Field(
+        default_factory=list,
+        description="Dominant-taste filter (e.g. ['spicy', 'umami'])",
+    )
+    food_groups: List[str] = Field(
+        default_factory=list,
+        description="Coarse ingredient-category filter (e.g. ['fish', 'legumes'])",
+    )
+    require_diet_tags: List[str] = Field(
+        default_factory=list,
+        description="Diet groups the recipe must carry — a hard filter, unlike "
+                    "`diet_tags`, which only boost ranking",
+    )
+    include_disabled: bool = Field(
+        default=False,
+        description="When true, disabled (soft-deleted) recipes appear in results — "
+                    "console/admin only; requires an admin or expert role",
+    )
 
 
 class RecipeDetailsBatchRequest(BaseModel):
@@ -720,6 +757,25 @@ class RecipeParamSearchRequest(BaseModel):
         default_factory=list,
         description="Dish types to filter by (e.g., breakfast, dessert)",
     )
+    # Annotation facets. Closed vocabularies owned by RecipeWrangler
+    # (`catalog.vocabularies`); this layer forwards them without opinion, so a
+    # vocabulary added downstream needs no change here.
+    cuisines: List[str] = Field(
+        default_factory=list,
+        description="Cuisine filter (e.g. ['italian', 'thai'])",
+    )
+    moods: List[str] = Field(
+        default_factory=list,
+        description="Eating-occasion filter (e.g. ['comfort', 'quick'])",
+    )
+    flavor_profiles: List[str] = Field(
+        default_factory=list,
+        description="Dominant-taste filter (e.g. ['spicy', 'umami'])",
+    )
+    food_groups: List[str] = Field(
+        default_factory=list,
+        description="Coarse ingredient-category filter (e.g. ['fish', 'legumes'])",
+    )
     max_duration_minutes: Optional[int] = Field(
         default=None,
         ge=0,
@@ -750,6 +806,57 @@ class RecipeParamSearchRequest(BaseModel):
             "Console/admin only: include disabled (soft-deleted) recipes in "
             "results. Requires the admin or expert role."
         ),
+    )
+
+
+class CatalogSearchRequest(BaseModel):
+    """Request payload for the catalog search contract.
+
+    Field-for-field identical to RecipeWrangler's `/api/v2/recipes/search`,
+    which is itself identical to wisefood-data-api's SearchSchema. Kept in
+    lockstep deliberately: the point of the contract is that one UI search
+    component works against the catalog and the recipe corpus alike, and a
+    field renamed or constrained here would break that quietly.
+
+    Unlike `/recipes/search` there is no LLM in the request path — `q` ranks,
+    `fq` filters, and a bare noun cannot come back matching the whole corpus.
+    """
+    q: Optional[str] = Field(
+        default=None,
+        description="Free-text query. Ranks results; never filters them.",
+    )
+    fq: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Filter queries in Lucene syntax, ANDed together, e.g. "
+            '["cuisines:italian", "food_groups:fruit", "duration:[* TO 30]"]'
+        ),
+    )
+    fl: List[str] = Field(
+        default_factory=list,
+        description="Fields to return. Empty returns the whole document.",
+    )
+    sort: List[str] = Field(
+        default_factory=list,
+        description='Sort clauses, e.g. ["default_nutri_rank:asc", "title.kw:asc"]',
+    )
+    facets: List[str] = Field(
+        default_factory=list,
+        description="Keyword fields to facet on. Any mapped keyword field works.",
+    )
+    facet_limit: int = Field(default=30, ge=1, le=200)
+    limit: int = Field(default=20, ge=0, le=200)
+    offset: int = Field(default=0, ge=0)
+    include_inactive: bool = Field(
+        default=False,
+        description=(
+            "Console/admin only: include withdrawn recipes. Requires the "
+            "admin or expert role."
+        ),
+    )
+    highlight: List[str] = Field(
+        default_factory=list,
+        description="Fields to return highlighted snippets for.",
     )
 
 
