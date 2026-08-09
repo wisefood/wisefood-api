@@ -221,12 +221,25 @@ class FoodScholar:
         return await cls.post("/api/v1/enrich/worker/pause", json={"paused": paused})
 
     @classmethod
+    async def restart_enrichment_workers(cls, payload: dict):
+        return await cls.post("/api/v1/enrich/worker/restart", json=payload)
+
+    @classmethod
     async def get_guideline_storage(cls, artifact_uuid: str):
         return await cls.get(f"/api/v1/guidelines/storage/{artifact_uuid}")
 
     @classmethod
-    async def enqueue_guideline_extraction(cls, artifact_uuid: str):
-        return await cls.post(f"/api/v1/guidelines/extract/{artifact_uuid}", json={})
+    async def enqueue_guideline_extraction(cls, artifact_uuid: str, payload: dict | None = None):
+        # The payload carries guide_id and the document-profiling options; an
+        # empty body means the run has no idea which guide it is reading, and
+        # every rule it extracts loses its population context.
+        return await cls.post(
+            f"/api/v1/guidelines/extract/{artifact_uuid}", json=payload or {}
+        )
+
+    @classmethod
+    async def get_guideline_worker_status(cls):
+        return await cls.get("/api/v1/guidelines/worker/status")
 
     @classmethod
     async def get_guideline_extraction_status(cls, artifact_uuid: str):
@@ -235,6 +248,54 @@ class FoodScholar:
     @classmethod
     async def import_guidelines(cls, artifact_uuid: str, payload: dict):
         return await cls.post(f"/api/v1/guidelines/import/{artifact_uuid}", json=payload)
+
+    # ------------------------------------------------------------------ #
+    # Guideline facet enrichment (post-extraction)
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    async def preview_guideline_enrichment(cls, payload: dict):
+        return await cls.post("/api/v1/guidelines/enrichment/preview", json=payload)
+
+    @classmethod
+    async def enqueue_guideline_enrichment(cls, payload: dict):
+        return await cls.post("/api/v1/guidelines/enrichment/enqueue", json=payload)
+
+    @classmethod
+    async def get_guideline_enrichment_status(cls):
+        return await cls.get("/api/v1/guidelines/enrichment/status")
+
+    @classmethod
+    async def get_guideline_enrichment_worker_status(cls):
+        return await cls.get("/api/v1/guidelines/enrichment/worker/status")
+
+    # ------------------------------------------------------------------ #
+    # Guideline corpus state and activation
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    async def audit_guideline_corpus(cls):
+        return await cls.get("/api/v1/guidelines/corpus/audit")
+
+    @classmethod
+    async def get_guideline_activation_plan(cls, require_verified: bool = True):
+        return await cls.get(
+            "/api/v1/guidelines/corpus/activation-plan",
+            params={"require_verified": require_verified},
+        )
+
+    @classmethod
+    async def activate_guide_guidelines(
+        cls,
+        guide_urn: str,
+        *,
+        require_verified: bool = True,
+        dry_run: bool = True,
+    ):
+        return await cls.post(
+            f"/api/v1/guidelines/corpus/activate/{guide_urn}",
+            params={"require_verified": require_verified, "dry_run": dry_run},
+        )
 
 
 FOODSCHOLAR = FoodScholar.get_client()

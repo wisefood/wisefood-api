@@ -9,9 +9,13 @@ from schemas import (
     ArticleInput,
     ChatRequest,
     EnrichmentSweeperPauseRequest,
+    EnrichmentWorkerRestartRequest,
     # Memory nudge payloads are deliberately the same shape in both apps —
     # the FoodChat* models double as FoodScholar's.
     FoodChatMemoryDecisionRequest,
+    GuidelineEnrichmentEnqueueRequest,
+    GuidelineEnrichmentPreviewRequest,
+    GuidelineExtractionRequest,
     GuidelineImportRequest,
     QAFeedbackRequest,
     QARequest,
@@ -173,6 +177,20 @@ async def set_enrichment_sweeper_paused(
     return await FOODSCHOLAR.set_enrichment_sweeper_paused(body.paused)
 
 
+@router.post("/enrich/worker/restart", dependencies=[Depends(auth("admin"))])
+@render()
+async def restart_enrichment_workers(
+    request: Request, body: EnrichmentWorkerRestartRequest
+):
+    """
+    Force the enrichment workers back into a running state.
+
+    Admin-only rather than admin,expert: this rebuilds worker threads and
+    clears a pause another operator may have set deliberately.
+    """
+    return await FOODSCHOLAR.restart_enrichment_workers(body.model_dump())
+
+
 @router.post(
     "/enrich/articles/{urn:path}",
     dependencies=[Depends(auth("admin,expert"))],
@@ -266,8 +284,25 @@ async def get_guideline_storage(request: Request, artifact_uuid: str):
     dependencies=[Depends(auth()), Depends(deny_guests)],
 )
 @render()
-async def enqueue_guideline_extraction(request: Request, artifact_uuid: str):
-    return await FOODSCHOLAR.enqueue_guideline_extraction(artifact_uuid)
+async def enqueue_guideline_extraction(
+    request: Request,
+    artifact_uuid: str,
+    body: GuidelineExtractionRequest | None = None,
+):
+    # The body is optional so existing callers keep working, but passing
+    # guide_id is what gives every extracted rule its population context.
+    payload = body.model_dump(exclude_none=True) if body else {}
+    return await FOODSCHOLAR.enqueue_guideline_extraction(artifact_uuid, payload)
+
+
+@router.get(
+    "/guidelines/worker",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def get_guideline_worker_status(request: Request):
+    """Extraction worker stats and queue depth."""
+    return await FOODSCHOLAR.get_guideline_worker_status()
 
 
 @router.get("/guidelines/extract/{artifact_uuid}", dependencies=[Depends(auth())])
@@ -286,4 +321,103 @@ async def import_guidelines(
 ):
     return await FOODSCHOLAR.import_guidelines(
         artifact_uuid, body.model_dump(exclude_none=True)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Guideline facet enrichment
+#
+# Reads are open to curators, who need to see what enrichment proposed before
+# trusting it. Writes queue corpus-wide model work, so they are admin-only.
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/guidelines/enrichment/preview",
+    dependencies=[Depends(auth("admin,expert")), Depends(deny_guests)],
+)
+@render()
+async def preview_guideline_enrichment(
+    request: Request, body: GuidelineEnrichmentPreviewRequest
+):
+    return await FOODSCHOLAR.preview_guideline_enrichment(
+        body.model_dump(exclude_none=True)
+    )
+
+
+@router.post(
+    "/guidelines/enrichment/enqueue",
+    dependencies=[Depends(auth("admin")), Depends(deny_guests)],
+)
+@render()
+async def enqueue_guideline_enrichment(
+    request: Request, body: GuidelineEnrichmentEnqueueRequest | None = None
+):
+    payload = body.model_dump(exclude_none=True) if body else {}
+    return await FOODSCHOLAR.enqueue_guideline_enrichment(payload)
+
+
+@router.get(
+    "/guidelines/enrichment/status",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def get_guideline_enrichment_status(request: Request):
+    return await FOODSCHOLAR.get_guideline_enrichment_status()
+
+
+@router.get(
+    "/guidelines/enrichment/worker",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def get_guideline_enrichment_worker_status(request: Request):
+    return await FOODSCHOLAR.get_guideline_enrichment_worker_status()
+
+
+# --------------------------------------------------------------------------- #
+# Guideline corpus state and activation
+#
+# Retrieval only surfaces active guidelines, so activation is what puts a rule
+# in front of users — an admin decision, and previewable before it is made.
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/guidelines/corpus/audit",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def audit_guideline_corpus(request: Request):
+    return await FOODSCHOLAR.audit_guideline_corpus()
+
+
+@router.get(
+    "/guidelines/corpus/activation-plan",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def get_guideline_activation_plan(
+    request: Request, require_verified: bool = True
+):
+    return await FOODSCHOLAR.get_guideline_activation_plan(
+        require_verified=require_verified
+    )
+
+
+@router.post(
+    "/guidelines/corpus/activate/{guide_urn:path}",
+    dependencies=[Depends(auth("admin")), Depends(deny_guests)],
+)
+@render()
+async def activate_guide_guidelines(
+    request: Request,
+    guide_urn: str,
+    require_verified: bool = True,
+    dry_run: bool = True,
+):
+    return await FOODSCHOLAR.activate_guide_guidelines(
+        guide_urn,
+        require_verified=require_verified,
+        dry_run=dry_run,
     )

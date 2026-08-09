@@ -341,6 +341,53 @@ class ArticleInput(BaseModel):
     )
 
 
+class GuidelineExtractionRequest(BaseModel):
+    """
+    Options for a guideline extraction run.
+
+    ``guide_id`` is what lets an extracted rule carry its population: FoodScholar
+    injects the parent guide's title, region, audience and year into every page
+    prompt, so a sentence like "Provide portions of red meat twice a week" is
+    still attributable once it leaves the page it came from. Without it the run
+    falls back to reading the PDF's own opening pages, and without that too the
+    rules are context-free.
+    """
+
+    guide_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Guide identifier or URN whose metadata is injected into the "
+            "extraction prompts. Strongly recommended."
+        ),
+    )
+    model: Optional[str] = Field(
+        default=None, description="Override the extraction model"
+    )
+    dpi: Optional[int] = Field(
+        default=None, ge=72, le=300, description="Page render DPI"
+    )
+    profile_document: bool = Field(
+        default=True,
+        description=(
+            "Read the guide's opening pages to establish what the document is "
+            "when the catalog record does not say."
+        ),
+    )
+    profile_page_count: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="How many leading pages the document profile pass reads",
+    )
+    force: bool = Field(
+        default=False,
+        description=(
+            "Re-queue even when a job is already registered for this artifact, "
+            "to recover one whose worker died."
+        ),
+    )
+
+
 class GuidelineImportRequest(BaseModel):
     guide_id: str = Field(..., min_length=1, description="WiseFood guide identifier")
     dry_run: bool = Field(
@@ -354,13 +401,55 @@ class GuidelineImportRequest(BaseModel):
     action_type: str = Field(
         default="encourage",
         min_length=1,
-        description="Action type assigned to imported guide guidelines",
+        description=(
+            "Fallback action type for rules whose extraction produced no "
+            "per-rule hint. Legacy 'encourage' normalizes to 'choose'."
+        ),
     )
-    existing_scan_limit: int = Field(
-        default=500,
+    existing_scan_limit: Optional[int] = Field(
+        default=None,
         ge=1,
-        description="Maximum number of existing guide guidelines to scan for dedupe",
+        description=(
+            "Maximum number of existing guide guidelines to scan for dedupe and "
+            "sequence numbering. Omit to scan all of them, which is what "
+            "correctness requires — a bounded scan silently misses duplicates."
+        ),
     )
+    import_facets: bool = Field(
+        default=True,
+        description=(
+            "Carry per-rule facet hints and source references from a v2 "
+            "extraction result onto the created guidelines."
+        ),
+    )
+
+
+class GuidelineEnrichmentEnqueueRequest(BaseModel):
+    """Options for queueing post-extraction facet enrichment."""
+
+    guide_urns: Optional[List[str]] = Field(
+        default=None,
+        description="Guides to enrich. Omit to enrich every guide with guidelines.",
+    )
+    force: bool = Field(
+        default=False,
+        description="Re-enrich guidelines already at the current enrichment version",
+    )
+    allow_pdf_profile: bool = Field(
+        default=True,
+        description=(
+            "Read a guide's PDF when its catalog metadata does not establish "
+            "who its rules are for."
+        ),
+    )
+
+
+class GuidelineEnrichmentPreviewRequest(BaseModel):
+    """Sample a guide's rules and return proposed facets without writing."""
+
+    guide_urn: str = Field(..., min_length=1, description="Guide to sample")
+    limit: int = Field(default=10, ge=1, le=50, description="How many rules to sample")
+    allow_pdf_profile: bool = Field(default=True)
 
 
 class ArticleEnrichmentRequest(BaseModel):
@@ -388,6 +477,20 @@ class EnrichmentSweeperPauseRequest(BaseModel):
 
     paused: bool = Field(
         ..., description="True to pause the sweeper, False to resume it"
+    )
+
+
+class EnrichmentWorkerRestartRequest(BaseModel):
+    """Force the FoodScholar enrichment workers back into a running state."""
+
+    sweeper: bool = Field(default=True, description="Restart the catalog sweeper")
+    jobs: bool = Field(default=True, description="Restart the on-demand job worker")
+    resume: bool = Field(
+        default=True,
+        description=(
+            "Also clear the sweeper pause switch, which has no expiry and "
+            "otherwise survives restarts"
+        ),
     )
 
 
