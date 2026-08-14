@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 import kutils
 from auth import auth
+from exceptions import InternalError
 from routers.generic import render
 from schemas import UserConsentCreate, UserConsentRecord, UserConsentStatus
 from api.v1.users import USER_CONSENT, DEFAULT_CONSENT_TYPE
@@ -40,6 +41,61 @@ def client_ip(request: Request) -> Optional[str]:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
+
+
+# ========== Account Erasure ==========
+
+
+@router.delete(
+    "/me",
+    dependencies=[Depends(auth())],
+    summary="Delete the authenticated account and all of its data",
+    description=(
+        "Irreversible. Deletes the caller's household and every member in it, "
+        "their profiles, meal plans, favorites, adapted recipes and saved "
+        "items (all by database cascade), their FoodChat conversations, and "
+        "finally the account itself.\n\n"
+        "Three things survive, and the privacy notice says so: the append-only "
+        "consent ledger, which is the record that a lawful basis existed for "
+        "the processing that already happened and which no longer resolves to "
+        "a person once the account is gone; FoodScholar Q&A sessions, which "
+        "carry their own short expiry; and Langfuse traces of model requests, "
+        "which live in a separate system this flow does not reach.\n\n"
+        "Household members other than the owner are deleted with the "
+        "household — a household cannot outlive the account that owns it."
+    ),
+)
+@render()
+async def api_delete_my_account(request: Request):
+    """
+    Erase the calling user: their data first, their account last.
+
+    Reports what actually happened rather than assuming success — a household
+    that refuses to delete must not be reported to the user as erased.
+    """
+    from erasure import purge_user
+
+    user_id = kutils.current_user(request)["sub"]
+    summary = await purge_user(user_id)
+
+    if not summary["account_deleted"]:
+        logger.error("Account erasure incomplete for %s: %s", user_id, summary)
+        raise InternalError(
+            detail=(
+                "We could not finish deleting your account. Nothing has been "
+                "left in an unusable state — please try again, or contact us "
+                "so we can complete it manually."
+            )
+        )
+
+    logger.info("Account erased on user request: %s", summary)
+    return {
+        "erased": True,
+        "households_deleted": summary["households_deleted"],
+        "members_deleted": summary["members_deleted"],
+        "chat_sessions_deleted": summary["chat_sessions_deleted"],
+        "retained": ["consent_ledger", "model_request_traces"],
+    }
 
 
 # ========== User Consent Endpoints ==========

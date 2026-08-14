@@ -41,19 +41,79 @@ def _generate_password() -> str:
 
 
 def _guest_users(max_results: int) -> List[Dict[str, Any]]:
-    """Fetch Keycloak users matching the guest username prefix."""
-    users = KEYCLOAK_ADMIN_CLIENT().get_users(
-        query={"username": GUEST_USERNAME_PREFIX, "max": max_results}
-    )
-    # Keycloak username search is infix — keep strict prefix matches only,
-    # and only accounts stamped with the guest attribute (defense in depth
-    # against a real user registering a 'guest-…' lookalike name).
+    """Fetch the guest accounts Keycloak currently holds.
+
+    Identification is by the ``guest`` REALM ROLE, not by the guest attribute.
+    Keycloak's declarative user profile rejects unmanaged attributes by default
+    from version 24 on, so ``wisefood_guest`` can be silently dropped at
+    creation — and an attribute-only filter then matches nothing, which leaves
+    every guest un-reaped forever. The role is assigned through its own API call
+    and cannot be dropped that way.
+
+    Both guards are kept: the role says it was minted as a guest, and the strict
+    username prefix keeps a real user who somehow holds the role out of reach.
+    """
+    admin = KEYCLOAK_ADMIN_CLIENT()
+    users: List[Dict[str, Any]] = []
+
+    try:
+        users = admin.get_realm_role_members(
+            GUEST_ROLE, query={"max": max_results}
+        ) or []
+    except Exception:
+        logger.warning(
+            "Guest lookup by realm role failed — falling back to username search",
+            exc_info=True,
+        )
+
+    if not users:
+        # briefRepresentation=False asks for attributes explicitly rather than
+        # relying on the server default, which has changed across versions.
+        users = admin.get_users(
+            query={
+                "username": GUEST_USERNAME_PREFIX,
+                "max": max_results,
+                "briefRepresentation": False,
+            }
+        ) or []
+
+    # Keycloak username search is infix — keep strict prefix matches only.
+    # With registrationEmailAsUsername the stored username is the synthetic
+    # guest email, which carries the same prefix.
     return [
-        u
-        for u in users
-        if u.get("username", "").startswith(GUEST_USERNAME_PREFIX)
-        and (u.get("attributes") or {}).get(GUEST_ATTRIBUTE) == ["true"]
+        u for u in users if u.get("username", "").startswith(GUEST_USERNAME_PREFIX)
     ]
+
+
+def _guest_expires_at(user: Dict[str, Any]) -> int | None:
+    """When this guest is due for deletion, or None if it cannot be determined.
+
+    Prefers the expiry attribute written at creation. When that is missing —
+    the realm dropped it, or the guest predates it — falls back to Keycloak's
+    own ``createdTimestamp`` plus the configured TTL, which is present in every
+    user representation.
+
+    Returning None means "do not touch": the previous code defaulted an
+    unreadable expiry to 0, which reads as "expired since 1970" and would have
+    deleted every guest it could not parse.
+    """
+    raw = (user.get("attributes") or {}).get(GUEST_EXPIRES_ATTRIBUTE) or []
+    if raw:
+        try:
+            return int(raw[0])
+        except (ValueError, TypeError):
+            logger.warning(
+                "Guest %s: unparseable expiry %r", user.get("username"), raw[0]
+            )
+
+    created_ms = user.get("createdTimestamp")
+    if created_ms:
+        try:
+            return int(created_ms) // 1000 + config.settings["GUEST_TTL_SECONDS"]
+        except (ValueError, TypeError):
+            pass
+
+    return None
 
 
 async def create_guest() -> Dict[str, Any]:
@@ -94,6 +154,22 @@ async def create_guest() -> Dict[str, Any]:
             ],
         }
     )
+
+    # Keycloak 24+ drops attributes the realm's user profile does not declare,
+    # without erroring. Say so once per creation instead of discovering it as
+    # guests that never expire.
+    try:
+        stored = (admin.get_user(user_id).get("attributes") or {})
+        if stored.get(GUEST_EXPIRES_ATTRIBUTE) != [str(expires_at)]:
+            logger.warning(
+                "Guest %s: realm did not store %s (got %r). Expiry will fall "
+                "back to createdTimestamp + TTL; allow unmanaged attributes in "
+                "the realm user profile to restore exact expiries.",
+                username, GUEST_EXPIRES_ATTRIBUTE,
+                stored.get(GUEST_EXPIRES_ATTRIBUTE),
+            )
+    except Exception:
+        logger.debug("Guest %s: attribute read-back failed", username, exc_info=True)
 
     try:
         admin.assign_realm_roles(user_id, [admin.get_realm_role(GUEST_ROLE)])
@@ -136,60 +212,60 @@ async def create_guest() -> Dict[str, Any]:
 
 
 async def delete_guest(user_id: str) -> None:
-    """Tear down a guest: chat sessions, household (cascades), Keycloak user."""
-    from api.v1.households import HOUSEHOLD
-    from backend.foodchat import FOODCHAT
+    """Tear down a guest: chat sessions, household (cascades), Keycloak user.
 
-    household = None
-    try:
-        household = await HOUSEHOLD.get_by_owner(user_id)
-    except Exception:
-        logger.warning("Guest %s: household lookup failed", user_id, exc_info=True)
+    Shares the teardown with self-service account erasure (``erasure.purge_user``)
+    so the two can never drift — a guest and a registered account must be erased
+    the same way. Still raises when the Keycloak user survives, because
+    ``reap_expired_guests`` counts successes and a guest that outlives its expiry
+    has to keep being retried.
+    """
+    from erasure import purge_user
 
-    if household:
-        # FoodChat sessions live outside our DB and are not covered by the
-        # cascade. FoodScholar sessions expire via their own Redis TTL.
-        for member in household.get("members") or []:
-            try:
-                sessions = await FOODCHAT.get_member_sessions(member["id"])
-                for session in sessions or []:
-                    await FOODCHAT.delete_session(
-                        session_id=session["session_id"], member_id=member["id"]
-                    )
-            except Exception:
-                logger.warning(
-                    "Guest %s: FoodChat session cleanup failed for member %s",
-                    user_id,
-                    member.get("id"),
-                    exc_info=True,
-                )
-        try:
-            await HOUSEHOLD.delete(household["id"])
-        except Exception:
-            logger.warning(
-                "Guest %s: household deletion failed", user_id, exc_info=True
-            )
-
-    KEYCLOAK_ADMIN_CLIENT().delete_user(user_id)
+    summary = await purge_user(user_id)
+    if not summary["account_deleted"]:
+        raise RuntimeError(f"Guest {user_id} could not be deleted from Keycloak")
     logger.info("Guest %s deleted", user_id)
 
 
 async def reap_expired_guests() -> int:
-    """Delete all guests whose expiry attribute is in the past."""
+    """Delete every guest whose lifetime is up.
+
+    Logs what it saw, not only what it deleted: a reaper that quietly finds zero
+    guests looks identical to a reaper with nothing to do, which is how this went
+    unnoticed. Counts are logged whenever any guest exists at all.
+    """
     now = int(time.time())
     reaped = 0
-    for user in _guest_users(max_results=1000):
-        raw = (user.get("attributes") or {}).get(GUEST_EXPIRES_ATTRIBUTE, ["0"])
+    guests = _guest_users(max_results=1000)
+    undetermined = 0
+
+    for user in guests:
+        expires_at = _guest_expires_at(user)
+        if expires_at is None:
+            undetermined += 1
+            continue
+        if expires_at > now:
+            continue
         try:
-            expires_at = int(raw[0])
-        except (ValueError, IndexError, TypeError):
-            expires_at = 0
-        if expires_at <= now:
-            try:
-                await delete_guest(user["id"])
-                reaped += 1
-            except Exception:
-                logger.warning(
-                    "Failed to reap guest %s", user.get("username"), exc_info=True
-                )
+            await delete_guest(user["id"])
+            reaped += 1
+        except Exception:
+            logger.warning(
+                "Failed to reap guest %s", user.get("username"), exc_info=True
+            )
+
+    if guests:
+        logger.info(
+            "Guest reaper: %d guest(s) found, %d expired and removed, "
+            "%d with no determinable expiry (left alone)",
+            len(guests), reaped, undetermined,
+        )
+    if undetermined:
+        logger.warning(
+            "%d guest(s) carry neither an expiry attribute nor a creation "
+            "timestamp — they will never be reaped. Check whether the realm's "
+            "user profile permits unmanaged attributes.",
+            undetermined,
+        )
     return reaped

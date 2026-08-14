@@ -4,7 +4,7 @@ from auth import auth
 from budget import ip_rate_limit
 from schemas import LoginSchema, MTMSchema
 import kutils
-from exceptions import AuthenticationError
+from exceptions import AuthenticationError, AuthorizationError
 
 router = APIRouter(prefix="/api/v1/system", tags=["System Operations"])
 
@@ -79,3 +79,38 @@ async def guest_login(request: Request):
     import guests
 
     return await guests.create_guest()
+
+
+@router.delete(
+    "/guest",
+    dependencies=[Depends(auth())],
+    summary="Erase this guest account and all of its data now",
+    description=(
+        "Delete the calling guest account immediately: its household and "
+        "members, its FoodChat sessions, and the Keycloak user itself. Guests "
+        "are already reaped automatically at expiry; this exists so the data "
+        "can be erased on demand — at a conference booth, between one attendee "
+        "and the next, without waiting for the TTL. Guest accounts only: a "
+        "registered user calling this gets 403, because account deletion for "
+        "real users is a different, consent-bearing flow."
+    ),
+)
+@render()
+async def guest_purge(request: Request):
+    """
+    Erase the calling guest and everything provisioned for it.
+
+    Same teardown the expiry reaper runs, triggered by the session that owns
+    the data. The token is dead afterwards — the client must drop it and start
+    a new guest session if it wants to continue.
+    """
+    import guests
+
+    if not kutils.is_guest(request):
+        raise AuthorizationError(
+            detail="Only guest accounts can be erased through this endpoint."
+        )
+
+    user_id = kutils.current_user(request)["sub"]
+    await guests.delete_guest(user_id)
+    return {"erased": True}
