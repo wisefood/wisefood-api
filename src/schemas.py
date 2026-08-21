@@ -1404,6 +1404,53 @@ class FoodChatSavePlanRequest(BaseModel):
     )
 
 
+class FoodChatPantryRequest(BaseModel):
+    """Pantry items, as the member typed them. FoodChat normalizes them."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    items: List[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description=(
+            "On-hand ingredients to plan around. On PUT this is the WHOLE "
+            "list — an empty list clears the pantry; on POST it is added to "
+            "whatever is already there"
+        ),
+    )
+
+
+class FoodChatReplanRequest(BaseModel):
+    """Re-plan from the standing state, with no new message to classify."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    plan_type: Optional[Literal["daily", "weekly"]] = Field(
+        default=None,
+        description=(
+            "Which canvas to re-plan. Omitted means the active one — pass it "
+            "explicitly when the click came from a plan that may not be newest"
+        ),
+    )
+
+
+class FoodChatToolInvokeRequest(BaseModel):
+    """Invoke one FoodChat tool by name."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    arguments: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Arguments for the tool, matching the schema in GET /tools. "
+            "Tools that name a session are checked against member_id"
+        ),
+    )
+
+
 class FoodChatFeedbackRequest(BaseModel):
     """Request payload for assistant message feedback."""
     member_id: str = Field(

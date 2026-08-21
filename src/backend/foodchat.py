@@ -1,5 +1,6 @@
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -481,6 +482,89 @@ class FoodChat:
                 "member_id": member_id,
                 "cooking_for": cooking_for,
             },
+        )
+
+    # ---------------------------------------------------------------- #
+    # Standing planning state — the pantry panel and the facet chips    #
+    # ---------------------------------------------------------------- #
+
+    @classmethod
+    async def get_planning_state(cls, session_id: str, member_id: str):
+        """What is standing for this session: pantry, facets, stated diet."""
+        return await cls.get(
+            f"/foodchat/sessions/{session_id}/planning-state",
+            params=cls._member_params(member_id),
+        )
+
+    @classmethod
+    async def set_pantry(cls, session_id: str, member_id: str, items: List[str]):
+        """Replace the pantry with exactly these items (the panel's save)."""
+        return await cls.put(
+            f"/foodchat/sessions/{session_id}/pantry",
+            json={"member_id": member_id, "items": items},
+        )
+
+    @classmethod
+    async def add_pantry_items(cls, session_id: str, member_id: str, items: List[str]):
+        """Add items, leaving the rest of the pantry alone."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/pantry",
+            json={"member_id": member_id, "items": items},
+        )
+
+    @classmethod
+    async def remove_pantry_item(cls, session_id: str, member_id: str, item: str):
+        """Tick one item off."""
+        return await cls.delete(
+            f"/foodchat/sessions/{session_id}/pantry/{quote(item, safe='')}",
+            params=cls._member_params(member_id),
+        )
+
+    @classmethod
+    async def remove_facet(cls, session_id: str, member_id: str, value: str):
+        """Take back one inferred facet — the removable chip on the plan."""
+        return await cls.delete(
+            f"/foodchat/sessions/{session_id}/facets/{quote(value, safe='')}",
+            params=cls._member_params(member_id),
+        )
+
+    @classmethod
+    async def replan(cls, session_id: str, member_id: str, plan_type: Optional[str] = None):
+        """Re-plan from the standing state. Generates a plan, so it gets the
+        same extended timeout as the other planning calls."""
+        payload: Dict[str, Any] = {"member_id": member_id}
+        if plan_type is not None:
+            payload["plan_type"] = plan_type
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/replan",
+            json=payload,
+            timeout=cls._extra_long_timeout(),
+        )
+
+    @classmethod
+    async def get_vocabularies(cls):
+        """The live facet vocabulary the recipe corpus actually carries."""
+        return await cls.get("/foodchat/vocabularies")
+
+    # ---------------------------------------------------------------- #
+    # Tool surface                                                      #
+    # ---------------------------------------------------------------- #
+
+    @classmethod
+    async def list_tools(cls):
+        """Every tool the agent can call, with its schema."""
+        return await cls.get("/foodchat/tools")
+
+    @classmethod
+    async def invoke_tool(
+        cls, tool_name: str, member_id: str, arguments: Dict[str, Any],
+    ):
+        """Run one tool by name. Some regenerate part of a plan, so this gets
+        the extended timeout rather than the default."""
+        return await cls.post(
+            f"/foodchat/tools/{tool_name}",
+            json={"member_id": member_id, "arguments": arguments},
+            timeout=cls._extra_long_timeout(),
         )
 
 

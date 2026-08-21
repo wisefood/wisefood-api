@@ -15,9 +15,12 @@ from schemas import (
     FoodChatCreateSessionRequest,
     FoodChatFeedbackRequest,
     FoodChatMemoryDecisionRequest,
+    FoodChatPantryRequest,
     FoodChatPlanParametersRequest,
     FoodChatRenameSessionRequest,
+    FoodChatReplanRequest,
     FoodChatSavePlanRequest,
+    FoodChatToolInvokeRequest,
     FoodChatUpdateDinersRequest,
 )
 
@@ -410,4 +413,159 @@ async def submit_feedback(
         member_id=payload.member_id,
         rating=payload.rating,
         comment=payload.comment,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Standing planning state — the pantry panel and the removable facet chips     #
+# --------------------------------------------------------------------------- #
+# These were unreachable from the browser: FoodChat held the pantry and the
+# inferred facets in session state and exposed no way to see or correct them,
+# and the gateway is the only route the UI has. Same authorization as every
+# other session-scoped proxy here — the household owner (or an admin/agent),
+# checked against the member the payload names, before anything is forwarded.
+
+
+@router.get("/sessions/{session_id}/planning-state", dependencies=[Depends(auth())])
+@render()
+async def get_planning_state(
+    request: Request,
+    session_id: str,
+    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
+):
+    """What is standing for this session: pantry, facets, stated diet, claims.
+
+    The plan's own ledger says what was applied to THAT plan; this says what is
+    still in force for the next one — which is what lets the constraints on a
+    plan survive a page reload.
+    """
+    await verify_member_access(request, member_id)
+    return await FOODCHAT.get_planning_state(
+        session_id=session_id, member_id=member_id,
+    )
+
+
+@router.put("/sessions/{session_id}/pantry", dependencies=[Depends(auth())])
+@render()
+async def set_pantry(
+    request: Request, session_id: str, payload: FoodChatPantryRequest,
+):
+    """Replace the pantry with exactly these items — the panel's save.
+
+    The whole list rather than a delta: a member who cleared the last item
+    means the pantry is empty, which an additive-only write cannot express.
+    """
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.set_pantry(
+        session_id=session_id, member_id=payload.member_id, items=payload.items,
+    )
+
+
+@router.post("/sessions/{session_id}/pantry", dependencies=[Depends(auth())])
+@render()
+async def add_pantry_items(
+    request: Request, session_id: str, payload: FoodChatPantryRequest,
+):
+    """Add on-hand ingredients, leaving the rest of the pantry alone."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.add_pantry_items(
+        session_id=session_id, member_id=payload.member_id, items=payload.items,
+    )
+
+
+@router.delete("/sessions/{session_id}/pantry/{item}", dependencies=[Depends(auth())])
+@render()
+async def remove_pantry_item(
+    request: Request,
+    session_id: str,
+    item: str,
+    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
+):
+    """Tick one item off — used up, or heard wrong."""
+    await verify_member_access(request, member_id)
+    return await FOODCHAT.remove_pantry_item(
+        session_id=session_id, member_id=member_id, item=item,
+    )
+
+
+@router.delete("/sessions/{session_id}/facets/{value}", dependencies=[Depends(auth())])
+@render()
+async def remove_facet(
+    request: Request,
+    session_id: str,
+    value: str,
+    member_id: str = Query(..., description=MEMBER_ID_QUERY_DESCRIPTION),
+):
+    """Take back one facet FoodChat inferred from something the member said."""
+    await verify_member_access(request, member_id)
+    return await FOODCHAT.remove_facet(
+        session_id=session_id, member_id=member_id, value=value,
+    )
+
+
+@router.post("/sessions/{session_id}/replan", dependencies=[Depends(auth())])
+@render()
+async def replan(request: Request, session_id: str, payload: FoodChatReplanRequest):
+    """Re-plan from the standing state — what a facet removal or pantry edit
+    calls once the member is done changing things.
+
+    Deliberately separate from the state writes above: ticking off three
+    pantry items should not run three regenerations.
+    """
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.replan(
+        session_id=session_id,
+        member_id=payload.member_id,
+        plan_type=payload.plan_type,
+    )
+
+
+@router.get("/vocabularies", dependencies=[Depends(auth())])
+@render()
+async def get_vocabularies(request: Request):
+    """The facet vocabulary the recipe corpus actually carries.
+
+    Not a convenience: the recipe search ANDs facet values and never relaxes an
+    unlisted one to nothing, so a value the corpus does not carry does not
+    soften a search — it empties it, and the member is told no meals exist.
+    """
+    return await FOODCHAT.get_vocabularies()
+
+
+# --------------------------------------------------------------------------- #
+# Tool surface                                                                 #
+# --------------------------------------------------------------------------- #
+# FoodChat exposes typed, individually callable capabilities — summarise the
+# week, replace one day, total a plan — and none of them had a route through
+# the gateway, so four of the five had no possible caller from the browser.
+
+
+@router.get("/tools", dependencies=[Depends(auth())])
+@render()
+async def list_tools(request: Request):
+    """Every tool the agent can call, with its schema.
+
+    Generated from FoodChat's registry, so a tool that exists is listed and a
+    tool that is listed exists. Each entry says whether it changes the plan and
+    whether it spends model calls, so a caller can decide before invoking.
+    """
+    return await FOODCHAT.list_tools()
+
+
+@router.post("/tools/{tool_name}", dependencies=[Depends(auth())])
+@render()
+async def invoke_tool(
+    request: Request, tool_name: str, payload: FoodChatToolInvokeRequest,
+):
+    """Run one tool by name.
+
+    Authorized here on the member the payload names, and again inside FoodChat
+    against the session the arguments name — two layers, because this route can
+    rewrite a whole day of someone's plan.
+    """
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.invoke_tool(
+        tool_name=tool_name,
+        member_id=payload.member_id,
+        arguments=payload.arguments,
     )
