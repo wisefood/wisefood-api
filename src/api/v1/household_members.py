@@ -250,13 +250,20 @@ class HouseholdMemberEntity(Entity):
                 member.image_url = spec["image_url"]
 
             # Update profile if provided
-            if "profile" in spec and spec["profile"] is not None:
+            profile_touched = "profile" in spec and spec["profile"] is not None
+            if profile_touched:
                 await self._create_member_profile_in_session(
                     db, entity_id, spec["profile"]
                 )
 
             await db.flush()
             await db.commit()
+            if profile_touched:
+                # The /profile PATCH, POST and DELETE paths all invalidate; this
+                # one mutated the same row and did not, so a profile changed
+                # through the member endpoint kept serving its old value for up
+                # to the cache TTL.
+                _profile_cache_invalidate(entity_id)
             return member.to_dict(include_profile=True)
 
     async def delete(
@@ -329,6 +336,8 @@ class HouseholdMemberEntity(Entity):
                     existing_profile.dietary_groups = []
             if "allergies" in profile_data:
                 existing_profile.allergies = profile_data.get("allergies") or []
+            if "properties" in profile_data:
+                existing_profile.properties = profile_data.get("properties") or {}
             existing_profile.updated_at = datetime.now(timezone.utc)
             await db.flush()
             return existing_profile.to_dict()
@@ -348,6 +357,11 @@ class HouseholdMemberEntity(Entity):
             nutritional_preferences=profile_data.get("nutritional_preferences", {}),
             dietary_groups=dietary_groups,
             allergies=profile_data.get("allergies", []),
+            # `properties` holds dietary_goals, standing_seeds, memory_log and
+            # memory_optouts. It was silently dropped on every create path, so
+            # only PATCH /members/{id}/profile was lossless — a profile created
+            # with goals came back without them and nothing reported it.
+            properties=profile_data.get("properties", {}),
         )
         db.add(profile)
         await db.flush()
