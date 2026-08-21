@@ -1,6 +1,11 @@
+import hashlib
+import hmac
 import logging
+import os
+import re
+import time
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 
@@ -147,9 +152,71 @@ class FoodChat:
         except ValueError:
             return response.text
 
+    # ------------------------------------------------------------------ #
+    # Member assertion                                                    #
+    # ------------------------------------------------------------------ #
+    # FoodChat is internally unauthenticated: it takes `member_id` as data and
+    # believes it. This gateway is the only party that can answer "does this
+    # Keycloak user own this member" — the household tables are here — so it
+    # signs that answer and FoodChat verifies the signature.
+    #
+    # `X-WiseFood-Member: <member_id>.<expires_at>.<hmac-sha256>`
+    #
+    # Minted in `request()` rather than in each of the twenty-odd methods
+    # below, because a header added in twenty places is a header missing from
+    # one of them, and the one that is missing it is the route that stays open.
+
+    ASSERTION_HEADER = "X-WiseFood-Member"
+    ASSERTION_TTL_SECONDS = 300
+
+    @classmethod
+    def _assertion_secret(cls) -> Optional[str]:
+        value = (os.getenv("FOODCHAT_ASSERTION_SECRET") or "").strip()
+        return value or None
+
+    # `/foodchat/members/{member_id}/...` — the third place a member can ride.
+    # Caught by pattern rather than by an argument each method has to remember
+    # to pass, for the same reason the header is minted in one place.
+    _MEMBER_PATH = re.compile(r"^/foodchat/members/([^/]+)/")
+
+    @classmethod
+    def _member_from(cls, endpoint: str, kwargs: Dict[str, Any]) -> Optional[str]:
+        """The member this request is about, wherever it happens to ride.
+
+        Three places, all of them real: the JSON body, the query string, and
+        the path. The header follows the payload rather than being passed
+        separately, so the two can never disagree about who is acting.
+        """
+        body = kwargs.get("json")
+        if isinstance(body, dict) and body.get("member_id"):
+            return str(body["member_id"])
+        params = kwargs.get("params")
+        if isinstance(params, dict) and params.get("member_id"):
+            return str(params["member_id"])
+        match = cls._MEMBER_PATH.match(endpoint or "")
+        if match:
+            return unquote(match.group(1))
+        return None
+
+    @classmethod
+    def _sign_member(cls, member_id: str, secret: str) -> str:
+        expires = int(time.time()) + cls.ASSERTION_TTL_SECONDS
+        # The separator is inside the signed payload, so a member id containing
+        # a dot cannot be shifted into the expiry field and re-signed.
+        payload = f"{member_id}|{expires}".encode()
+        digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return f"{member_id}.{expires}.{digest}"
+
     @classmethod
     async def request(cls, method: str, endpoint: str, **kwargs):
         client = cls._require_client()
+
+        secret = cls._assertion_secret()
+        member_id = cls._member_from(endpoint, kwargs)
+        if secret and member_id:
+            headers = dict(kwargs.pop("headers", None) or {})
+            headers[cls.ASSERTION_HEADER] = cls._sign_member(member_id, secret)
+            kwargs["headers"] = headers
 
         try:
             response = await client.request(method, endpoint, **kwargs)

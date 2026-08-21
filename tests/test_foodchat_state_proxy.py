@@ -325,3 +325,144 @@ def test_the_pantry_replace_sends_the_whole_list():
 
     assert captured["endpoint"] == "/foodchat/sessions/s1/pantry"
     assert captured["json"] == {"member_id": "m1", "items": ["zucchini"]}
+
+
+# ── the signed member assertion ───────────────────────────────────────────
+#
+# FoodChat is internally unauthenticated: it takes `member_id` as data and
+# believes it. This gateway is the only party that can answer "does this
+# Keycloak user own this member", so it signs that answer and FoodChat verifies
+# the signature. Without it, anything that can reach FoodChat's port can act as
+# any member alive.
+
+SECRET = "test-assertion-secret"
+
+
+def _capture_request(monkeypatch, secret=SECRET):
+    """Run one FoodChat call against a fake transport, return what it sent."""
+    import asyncio
+    import sys
+
+    import httpx
+
+    # `backend.foodchat` imports `main`, which imports the router, which imports
+    # `backend.foodchat` — so importing the backend FIRST hits a half-built
+    # module. Importing main first is what the route tests above already do.
+    sys.path.insert(0, "src")
+    import main  # noqa: F401
+
+    from backend.foodchat import FoodChat, FOODCHAT
+
+    if secret is None:
+        monkeypatch.delenv("FOODCHAT_ASSERTION_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("FOODCHAT_ASSERTION_SECRET", secret)
+
+    seen = {}
+
+    class _FakeClient:
+        async def request(self, method, endpoint, **kwargs):
+            seen["method"] = method
+            seen["endpoint"] = endpoint
+            seen["headers"] = kwargs.get("headers") or {}
+            # A response needs its request attached, or `raise_for_status()`
+            # raises on the missing link rather than on the status.
+            return httpx.Response(
+                200, json={"ok": True},
+                request=httpx.Request(method, f"http://foodchat.test{endpoint}"),
+            )
+
+    monkeypatch.setattr(FoodChat, "_require_client", classmethod(lambda cls: _FakeClient()))
+    return seen, asyncio, FOODCHAT
+
+
+def test_a_member_scoped_call_carries_a_signed_assertion(monkeypatch):
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(client.get_planning_state(session_id="s1", member_id="m1"))
+    header = seen["headers"].get("X-WiseFood-Member")
+    assert header and header.startswith("m1.")
+
+
+def test_the_assertion_verifies_with_the_shared_secret(monkeypatch):
+    """Signed the way FoodChat's `auth.verify` expects — same bytes, or the
+    header is just noise the other side rejects."""
+    import hashlib
+    import hmac
+
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(client.get_planning_state(session_id="s1", member_id="m1"))
+    member_id, expires, digest = seen["headers"]["X-WiseFood-Member"].rsplit(".", 2)
+    expected = hmac.new(
+        SECRET.encode(), f"{member_id}|{expires}".encode(), hashlib.sha256
+    ).hexdigest()
+    assert digest == expected
+
+
+def test_it_expires(monkeypatch):
+    import time
+
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(client.get_planning_state(session_id="s1", member_id="m1"))
+    expires = int(seen["headers"]["X-WiseFood-Member"].rsplit(".", 2)[1])
+    assert 0 < expires - int(time.time()) <= 300
+
+
+def test_the_member_in_the_body_is_the_one_signed(monkeypatch):
+    """The header follows the payload rather than being passed separately, so
+    the two cannot disagree about who is acting."""
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(client.set_pantry(session_id="s1", member_id="body-member", items=[]))
+    assert seen["headers"]["X-WiseFood-Member"].startswith("body-member.")
+
+
+def test_a_call_with_no_member_sends_no_assertion(monkeypatch):
+    """`/tools` and `/vocabularies` are the same for everyone and name nobody."""
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(client.list_tools())
+    assert "X-WiseFood-Member" not in seen["headers"]
+
+
+def test_no_secret_means_no_header(monkeypatch):
+    """The two services deploy independently. A gateway with no secret behaves
+    exactly as before, so neither side can be deployed into an outage."""
+    seen, asyncio, client = _capture_request(monkeypatch, secret=None)
+    asyncio.run(client.get_planning_state(session_id="s1", member_id="m1"))
+    assert "X-WiseFood-Member" not in seen["headers"]
+
+
+def test_it_is_minted_in_one_place_not_twenty(monkeypatch):
+    """Every client method goes through `request()`. A header added per-method
+    is a header missing from one of them, and that one is the open route."""
+    import inspect
+
+    from backend.foodchat import FoodChat
+
+    source = inspect.getsource(FoodChat)
+    assert source.count("ASSERTION_HEADER") == 2  # the constant, and its one use
+
+
+def test_a_member_named_only_in_the_path_is_still_asserted(monkeypatch):
+    """`/members/{id}/sessions` lists someone's whole conversation history from
+    their id alone, and the id is in neither the body nor the query."""
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(client.get_member_sessions(member_id="m1"))
+    assert seen["headers"]["X-WiseFood-Member"].startswith("m1.")
+
+
+@pytest.mark.parametrize("method,kwargs", [
+    ("get_planning_state", {"session_id": "s1", "member_id": "m1"}),
+    ("get_member_sessions", {"member_id": "m1"}),
+    ("get_member_current_plans", {"member_id": "m1"}),
+    ("set_pantry", {"session_id": "s1", "member_id": "m1", "items": []}),
+    ("add_pantry_items", {"session_id": "s1", "member_id": "m1", "items": ["x"]}),
+    ("remove_pantry_item", {"session_id": "s1", "member_id": "m1", "item": "x"}),
+    ("remove_facet", {"session_id": "s1", "member_id": "m1", "value": "light"}),
+    ("replan", {"session_id": "s1", "member_id": "m1"}),
+    ("invoke_tool", {"tool_name": "summarize_week", "member_id": "m1", "arguments": {}}),
+    ("get_session", {"session_id": "s1", "member_id": "m1"}),
+    ("get_member_saved_plans", {"member_id": "m1"}),
+])
+def test_every_member_scoped_call_is_asserted(monkeypatch, method, kwargs):
+    seen, asyncio, client = _capture_request(monkeypatch)
+    asyncio.run(getattr(client, method)(**kwargs))
+    assert seen["headers"].get("X-WiseFood-Member", "").startswith("m1."), method
