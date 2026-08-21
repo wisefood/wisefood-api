@@ -13,6 +13,7 @@ from schemas import (
     FoodChatChatRequest,
     FoodChatComposeRequest,
     FoodChatCreateSessionRequest,
+    FoodChatFacetRequest,
     FoodChatFeedbackRequest,
     FoodChatMemoryDecisionRequest,
     FoodChatPantryRequest,
@@ -485,6 +486,19 @@ async def remove_pantry_item(
     await verify_member_access(request, member_id)
     return await FOODCHAT.remove_pantry_item(
         session_id=session_id, member_id=member_id, item=item,
+    )
+
+
+@router.post("/sessions/{session_id}/facets", dependencies=[Depends(auth())])
+@render()
+async def add_facets(
+    request: Request, session_id: str, payload: FoodChatFacetRequest,
+):
+    """Ask for a taste the assistant did not infer — the other half of the
+    removable chip, and the only thing that can act on `/vocabularies`."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.add_facets(
+        session_id=session_id, member_id=payload.member_id, values=payload.values,
     )
 
 

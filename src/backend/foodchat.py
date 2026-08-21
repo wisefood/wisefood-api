@@ -588,6 +588,14 @@ class FoodChat:
         )
 
     @classmethod
+    async def add_facets(cls, session_id: str, member_id: str, values: List[str]):
+        """Ask for a taste the assistant did not infer."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/facets",
+            json={"member_id": member_id, "values": values},
+        )
+
+    @classmethod
     async def remove_facet(cls, session_id: str, member_id: str, value: str):
         """Take back one inferred facet — the removable chip on the plan."""
         return await cls.delete(

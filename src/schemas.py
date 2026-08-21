@@ -1421,6 +1421,23 @@ class FoodChatPantryRequest(BaseModel):
     )
 
 
+class FoodChatFacetRequest(BaseModel):
+    """Taste preferences to add, from the live recipe vocabulary."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    values: List[str] = Field(
+        default_factory=list,
+        max_length=12,
+        description=(
+            "Cuisines, moods, flavours or food groups. Matched against the "
+            "live vocabulary; anything the recipe collection is not tagged "
+            "with is rejected rather than silently emptying the next search"
+        ),
+    )
+
+
 class FoodChatReplanRequest(BaseModel):
     """Re-plan from the standing state, with no new message to classify."""
     member_id: str = Field(

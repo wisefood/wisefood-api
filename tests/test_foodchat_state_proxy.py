@@ -42,6 +42,7 @@ def _routes():
     ("PUT", f"{FOODCHAT_PREFIX}/sessions/{{session_id}}/pantry"),
     ("POST", f"{FOODCHAT_PREFIX}/sessions/{{session_id}}/pantry"),
     ("DELETE", f"{FOODCHAT_PREFIX}/sessions/{{session_id}}/pantry/{{item}}"),
+    ("POST", f"{FOODCHAT_PREFIX}/sessions/{{session_id}}/facets"),
     ("DELETE", f"{FOODCHAT_PREFIX}/sessions/{{session_id}}/facets/{{value}}"),
     ("POST", f"{FOODCHAT_PREFIX}/sessions/{{session_id}}/replan"),
     ("GET", f"{FOODCHAT_PREFIX}/vocabularies"),
@@ -457,6 +458,7 @@ def test_a_member_named_only_in_the_path_is_still_asserted(monkeypatch):
     ("add_pantry_items", {"session_id": "s1", "member_id": "m1", "items": ["x"]}),
     ("remove_pantry_item", {"session_id": "s1", "member_id": "m1", "item": "x"}),
     ("remove_facet", {"session_id": "s1", "member_id": "m1", "value": "light"}),
+    ("add_facets", {"session_id": "s1", "member_id": "m1", "values": ["light"]}),
     ("replan", {"session_id": "s1", "member_id": "m1"}),
     ("invoke_tool", {"tool_name": "summarize_week", "member_id": "m1", "arguments": {}}),
     ("get_session", {"session_id": "s1", "member_id": "m1"}),
@@ -466,3 +468,94 @@ def test_every_member_scoped_call_is_asserted(monkeypatch, method, kwargs):
     seen, asyncio, client = _capture_request(monkeypatch)
     asyncio.run(getattr(client, method)(**kwargs))
     assert seen["headers"].get("X-WiseFood-Member", "").startswith("m1."), method
+
+
+# ── the audit that keeps this true as routes are added ────────────────────
+#
+# Every check above names its handler by hand, which is fine until someone adds
+# the thirty-second proxy. This walks the router's own table instead: any
+# handler that names a member must authorize that member before forwarding,
+# and any that does not name one must be listed here with a reason.
+
+MEMBERLESS_PROXIES = {
+    "status": "a health probe, and the member has nothing to do with it",
+    "list_tools": "the tool manifest is identical for every member",
+    "get_vocabularies": "the corpus vocabulary is identical for every member",
+}
+
+
+def _foodchat_handlers():
+    import sys
+
+    sys.path.insert(0, "src")
+    import main
+
+    seen = {}
+    for route in main.api.routes:
+        path = getattr(route, "path", "")
+        endpoint = getattr(route, "endpoint", None)
+        if path.startswith(FOODCHAT_PREFIX) and endpoint is not None:
+            seen[endpoint.__name__] = endpoint
+    return seen
+
+
+def test_every_proxy_that_names_a_member_authorizes_it():
+    """The gateway is the only layer that knows WHO the caller is. A proxy that
+    forwards a member_id without checking it lets any authenticated user act as
+    any member — which is the whole reason FoodChat's own assertion exists."""
+    import inspect
+
+    offenders = []
+    for name, fn in _foodchat_handlers().items():
+        src = inspect.getsource(fn)
+        names_member = "member_id" in src
+        authorizes = "verify_member_access" in src
+        if names_member and not authorizes:
+            offenders.append(name)
+    assert not offenders, (
+        "these proxies forward a member without authorizing it: "
+        + ", ".join(sorted(offenders))
+    )
+
+
+def test_every_proxy_without_a_member_is_declared():
+    """So a route that quietly stops naming a member gets noticed."""
+    import inspect
+
+    undeclared = []
+    for name, fn in _foodchat_handlers().items():
+        if "member_id" not in inspect.getsource(fn) and name not in MEMBERLESS_PROXIES:
+            undeclared.append(name)
+    assert not undeclared, (
+        "these proxies name no member and are not declared memberless: "
+        + ", ".join(sorted(undeclared))
+    )
+
+
+def test_every_proxy_requires_authentication():
+    import sys
+
+    sys.path.insert(0, "src")
+    import main
+
+    unguarded = [
+        route.path
+        for route in main.api.routes
+        if getattr(route, "path", "").startswith(FOODCHAT_PREFIX)
+        and not getattr(route, "dependencies", None)
+    ]
+    assert not unguarded, f"unauthenticated foodchat proxies: {unguarded}"
+
+
+def test_authorization_precedes_the_forward_everywhere():
+    """Authorizing after the call would still have done the thing."""
+    import inspect
+
+    late = []
+    for name, fn in _foodchat_handlers().items():
+        src = inspect.getsource(fn)
+        if "verify_member_access" not in src:
+            continue
+        if src.find("verify_member_access") > src.find("FOODCHAT."):
+            late.append(name)
+    assert not late, f"these authorize after forwarding: {late}"
