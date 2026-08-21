@@ -16,6 +16,8 @@ from schemas import (
     FoodChatFeedbackRequest,
     FoodChatMemoryDecisionRequest,
     FoodChatPlanParametersRequest,
+    FoodChatRenameSessionRequest,
+    FoodChatSavePlanRequest,
     FoodChatUpdateDinersRequest,
 )
 
@@ -212,6 +214,56 @@ async def get_member_current_plans(request: Request, member_id: str):
     """Most recent saved daily/weekly plans for a member (dashboard widget)."""
     await verify_member_access(request, member_id)
     return await FOODCHAT.get_member_current_plans(member_id=member_id)
+
+
+# The three routes below were the gap between a built feature and a working
+# one: the UI has shipped a save/unsave button, a saved-plans list and a
+# rename control since the plan-canvas work, FoodChat has implemented all
+# three, and every call 404'd here because nothing proxied them.
+
+
+@router.patch("/sessions/{session_id}", dependencies=[Depends(auth())])
+@render()
+async def rename_session(
+    request: Request, session_id: str, payload: FoodChatRenameSessionRequest
+):
+    """Give a session a member-facing name (replaces the timestamp label)."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.rename_session(
+        session_id=session_id,
+        member_id=payload.member_id,
+        title=payload.title,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/meal-plans/{plan_id}/save",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def save_meal_plan(
+    request: Request,
+    session_id: str,
+    plan_id: str,
+    payload: FoodChatSavePlanRequest,
+):
+    """Save (or unsave) a plan so it outlives its conversation."""
+    await verify_member_access(request, payload.member_id)
+    return await FOODCHAT.save_meal_plan(
+        session_id=session_id,
+        plan_id=plan_id,
+        member_id=payload.member_id,
+        saved=payload.saved,
+        title=payload.title,
+    )
+
+
+@router.get("/members/{member_id}/saved-plans", dependencies=[Depends(auth())])
+@render()
+async def get_member_saved_plans(request: Request, member_id: str):
+    """Every plan the member saved, across all their sessions, newest first."""
+    await verify_member_access(request, member_id)
+    return await FOODCHAT.get_member_saved_plans(member_id=member_id)
 
 
 @router.post(

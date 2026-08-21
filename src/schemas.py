@@ -1370,6 +1370,40 @@ class FoodChatUpdateDinersRequest(BaseModel):
     )
 
 
+class FoodChatRenameSessionRequest(BaseModel):
+    """Request payload for giving a FoodChat session a member-facing name."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    title: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        description="The new session name, as the member typed it",
+    )
+
+
+class FoodChatSavePlanRequest(BaseModel):
+    """Request payload for saving (or unsaving) a meal plan to the library."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    saved: bool = Field(
+        default=True,
+        description="True to save the plan, false to remove it from the library",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description=(
+            "Optional member-given name for the saved plan; FoodChat falls "
+            "back to the session title or the plan type when omitted"
+        ),
+    )
+
+
 class FoodChatFeedbackRequest(BaseModel):
     """Request payload for assistant message feedback."""
     member_id: str = Field(

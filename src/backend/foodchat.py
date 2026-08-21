@@ -187,6 +187,10 @@ class FoodChat:
         return await cls.request("PUT", endpoint, data=data, json=json, **kwargs)
 
     @classmethod
+    async def patch(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
+        return await cls.request("PATCH", endpoint, data=data, json=json, **kwargs)
+
+    @classmethod
     async def delete(cls, endpoint: str, **kwargs):
         return await cls.request("DELETE", endpoint, **kwargs)
 
@@ -272,6 +276,37 @@ class FoodChat:
             f"/foodchat/sessions/{session_id}",
             params=cls._member_params(member_id),
         )
+
+    @classmethod
+    async def rename_session(cls, session_id: str, member_id: str, title: str):
+        """Give a session a member-facing name."""
+        return await cls.patch(
+            f"/foodchat/sessions/{session_id}",
+            json={"member_id": member_id, "title": title},
+        )
+
+    @classmethod
+    async def save_meal_plan(
+        cls,
+        session_id: str,
+        plan_id: str,
+        member_id: str,
+        saved: bool = True,
+        title: Optional[str] = None,
+    ):
+        """Save (or unsave) a plan so it outlives its conversation."""
+        payload: Dict[str, Any] = {"member_id": member_id, "saved": saved}
+        if title is not None:
+            payload["title"] = title
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/meal-plans/{plan_id}/save",
+            json=payload,
+        )
+
+    @classmethod
+    async def get_member_saved_plans(cls, member_id: str):
+        """Every plan the member saved, across all their sessions."""
+        return await cls.get(f"/foodchat/members/{member_id}/saved-plans")
 
     @classmethod
     async def get_meal_plans(cls, session_id: str, member_id: str):
