@@ -35,6 +35,11 @@ class FoodChat:
     def get_client(
         cls,
         base_url: str = config.settings["FOODCHAT_URL"],
+        # For the reads: session lists, conversation pages, planning state.
+        # These do no model work, so 15s is generous — and keeping it low means
+        # a wedged FoodChat surfaces quickly on the cheap routes instead of
+        # tying up gateway connections. Generating calls pass
+        # `_extra_long_timeout()` explicitly.
         timeout: float = 15.0,
         max_connections: int = 15,
         max_keepalive_connections: int = 7,
@@ -303,6 +308,22 @@ class FoodChat:
             payload["comment"] = comment
         return payload
 
+    # The timeout ladder, outermost to innermost:
+    #
+    #   UI              180s   generous; it is a person watching a spinner
+    #   gateway          90s   this, for anything that generates a plan
+    #   FoodChat turn    70s   its own budget — it sheds work and answers
+    #   Groq call        45s   one model call, bounded, one retry
+    #
+    # Each layer must be strictly larger than the one inside it. When that
+    # inverted — FoodChat had NO budget and Groq had no timeout — a slow turn
+    # produced the worst available outcome: this gateway cut the connection at
+    # 90 seconds, the member was told the plan failed, and FoodChat carried on,
+    # finished it and stored it. The plan existed; they found it on reload.
+    #
+    # 90 stays where it is precisely so FoodChat's 70-second budget is the
+    # thing that fires first, and the member gets a real (if plainer) answer
+    # instead of a severed request.
     @classmethod
     def _extra_long_timeout(cls) -> float:
         return 90.0

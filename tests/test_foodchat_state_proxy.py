@@ -559,3 +559,56 @@ def test_authorization_precedes_the_forward_everywhere():
         if src.find("verify_member_access") > src.find("FOODCHAT."):
             late.append(name)
     assert not late, f"these authorize after forwarding: {late}"
+
+
+# ── the timeout ladder ────────────────────────────────────────────────────
+#
+# Each layer must be strictly larger than the one inside it:
+#
+#   UI 180s > gateway 90s > FoodChat turn budget 70s > one Groq call 45s
+#
+# When that inverted — FoodChat had no budget of its own and Groq had no
+# timeout — a slow turn produced the worst available outcome: this gateway cut
+# the connection, the member was told the plan failed, and FoodChat carried on,
+# finished the plan and stored it. They found it on the next reload.
+
+def test_the_generating_timeout_leaves_foodchat_room_to_answer():
+    """90 seconds is not arbitrary: FoodChat's own budget is 70, so FoodChat is
+    the layer that decides. If this dropped below it, the gateway would start
+    severing turns that were about to succeed."""
+    from backend.foodchat import FOODCHAT
+
+    assert FOODCHAT._extra_long_timeout() >= 85
+
+
+def test_reads_use_the_short_timeout():
+    """A wedged FoodChat should surface fast on the cheap routes rather than
+    holding gateway connections for a minute and a half."""
+    import inspect
+
+    from backend.foodchat import FoodChat
+
+    src = inspect.getsource(FoodChat.get_client)
+    assert "timeout: float = 15.0" in src
+
+
+@pytest.mark.parametrize("method", ["replan", "invoke_tool"])
+def test_only_the_generating_calls_get_the_long_timeout(method):
+    import inspect
+
+    from backend.foodchat import FoodChat
+
+    src = inspect.getsource(getattr(FoodChat, method))
+    assert "_extra_long_timeout()" in src
+
+
+def test_the_reads_do_not_get_it():
+    """A planning-state read that waited 90 seconds would make a wedged backend
+    look like a slow one."""
+    import inspect
+
+    from backend.foodchat import FoodChat
+
+    for method in ("get_planning_state", "get_session", "get_member_sessions"):
+        src = inspect.getsource(getattr(FoodChat, method))
+        assert "_extra_long_timeout" not in src, method
