@@ -166,6 +166,31 @@ class FoodScholar:
         return await FOODSCHOLAR.post("/api/v1/qa/ask", json=payload)
 
     @classmethod
+    async def ask_question_stream(cls, payload: dict):
+        """Proxy FoodScholar's streaming QA endpoint as raw SSE bytes.
+
+        An async generator over the upstream ``text/event-stream`` body,
+        yielded chunk-for-chunk with no buffering or reframing — the agentic
+        pipeline's stage/step/answer_delta events pass through untouched.
+
+        The pooled client's 15 s default timeout would kill a stream mid-
+        answer, so reads get a generous window; the upstream sends keep-alive
+        comments every 15 s, which keeps the read timer fed even during long
+        LLM calls.
+        """
+        if cls._client is None:
+            raise RuntimeError(
+                "FoodScholar client not initialized. Call get_client() first."
+            )
+        timeout = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+        async with cls._client.stream(
+            "POST", "/api/v1/qa/ask/stream", json=payload, timeout=timeout
+        ) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                yield chunk
+
+    @classmethod
     async def submit_qa_feedback(cls, payload: dict):
         return await FOODSCHOLAR.post("/api/v1/qa/feedback", json=payload)
 

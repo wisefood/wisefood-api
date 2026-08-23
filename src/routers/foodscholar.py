@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, Request, Depends
+from fastapi.responses import StreamingResponse
 from routers.generic import render
 from typing import List, Optional
 import logging
@@ -239,6 +240,52 @@ async def ask_question(request: Request, body: QARequest):
         await verify_member_access(request, payload.member_id)
 
     return await FOODSCHOLAR.ask_question(payload.model_dump(exclude_none=True))
+
+
+@router.post(
+    "/qa/ask/stream",
+    dependencies=[Depends(auth()), Depends(guest_budget("qa"))],
+)
+async def ask_question_stream(request: Request, body: QARequest):
+    """
+    Streaming QA: proxies FoodScholar's agentic pipeline as Server-Sent Events.
+
+    The stream narrates the pipeline (`step` events for collapsible reasoning
+    steps, `stage.*` detail events, `answer_delta` token chunks, `citations`)
+    and terminates with `done`, `clarification`, or `error`. Frames pass
+    through unbuffered; no APIEnvelope wrapping.
+    """
+    user = kutils.current_user(request)
+    payload = body.model_copy(update={"user_id": user["sub"]})
+
+    if payload.member_id:
+        await verify_member_access(request, payload.member_id)
+
+    upstream = FOODSCHOLAR.ask_question_stream(
+        payload.model_dump(exclude_none=True)
+    )
+    # Prime the stream: an upstream connection/HTTP failure surfaces here as a
+    # normal error response instead of a dead 200 stream.
+    try:
+        first_chunk = await upstream.__anext__()
+    except StopAsyncIteration:
+        first_chunk = b""
+
+    async def frames():
+        if first_chunk:
+            yield first_chunk
+        async for chunk in upstream:
+            yield chunk
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/qa/feedback", dependencies=[Depends(auth())])
