@@ -1370,6 +1370,104 @@ class FoodChatUpdateDinersRequest(BaseModel):
     )
 
 
+class FoodChatRenameSessionRequest(BaseModel):
+    """Request payload for giving a FoodChat session a member-facing name."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    title: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        description="The new session name, as the member typed it",
+    )
+
+
+class FoodChatSavePlanRequest(BaseModel):
+    """Request payload for saving (or unsaving) a meal plan to the library."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    saved: bool = Field(
+        default=True,
+        description="True to save the plan, false to remove it from the library",
+    )
+    title: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description=(
+            "Optional member-given name for the saved plan; FoodChat falls "
+            "back to the session title or the plan type when omitted"
+        ),
+    )
+
+
+class FoodChatPantryRequest(BaseModel):
+    """Pantry items, as the member typed them. FoodChat normalizes them."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    items: List[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description=(
+            "On-hand ingredients to plan around. On PUT this is the WHOLE "
+            "list — an empty list clears the pantry; on POST it is added to "
+            "whatever is already there"
+        ),
+    )
+
+
+class FoodChatFacetRequest(BaseModel):
+    """Taste preferences to add, from the live recipe vocabulary."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    values: List[str] = Field(
+        default_factory=list,
+        max_length=12,
+        description=(
+            "Cuisines, moods, flavours or food groups. Matched against the "
+            "live vocabulary; anything the recipe collection is not tagged "
+            "with is rejected rather than silently emptying the next search"
+        ),
+    )
+
+
+class FoodChatReplanRequest(BaseModel):
+    """Re-plan from the standing state, with no new message to classify."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    plan_type: Optional[Literal["daily", "weekly"]] = Field(
+        default=None,
+        description=(
+            "Which canvas to re-plan. Omitted means the active one — pass it "
+            "explicitly when the click came from a plan that may not be newest"
+        ),
+    )
+
+
+class FoodChatToolInvokeRequest(BaseModel):
+    """Invoke one FoodChat tool by name."""
+    member_id: str = Field(
+        ...,
+        description="Household member ID that owns the FoodChat session",
+    )
+    arguments: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Arguments for the tool, matching the schema in GET /tools. "
+            "Tools that name a session are checked against member_id"
+        ),
+    )
+
+
 class FoodChatFeedbackRequest(BaseModel):
     """Request payload for assistant message feedback."""
     member_id: str = Field(

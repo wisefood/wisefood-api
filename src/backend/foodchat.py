@@ -1,5 +1,11 @@
+import hashlib
+import hmac
 import logging
+import os
+import re
+import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote, unquote
 
 import httpx
 
@@ -29,6 +35,11 @@ class FoodChat:
     def get_client(
         cls,
         base_url: str = config.settings["FOODCHAT_URL"],
+        # For the reads: session lists, conversation pages, planning state.
+        # These do no model work, so 15s is generous — and keeping it low means
+        # a wedged FoodChat surfaces quickly on the cheap routes instead of
+        # tying up gateway connections. Generating calls pass
+        # `_extra_long_timeout()` explicitly.
         timeout: float = 15.0,
         max_connections: int = 15,
         max_keepalive_connections: int = 7,
@@ -146,9 +157,71 @@ class FoodChat:
         except ValueError:
             return response.text
 
+    # ------------------------------------------------------------------ #
+    # Member assertion                                                    #
+    # ------------------------------------------------------------------ #
+    # FoodChat is internally unauthenticated: it takes `member_id` as data and
+    # believes it. This gateway is the only party that can answer "does this
+    # Keycloak user own this member" — the household tables are here — so it
+    # signs that answer and FoodChat verifies the signature.
+    #
+    # `X-WiseFood-Member: <member_id>.<expires_at>.<hmac-sha256>`
+    #
+    # Minted in `request()` rather than in each of the twenty-odd methods
+    # below, because a header added in twenty places is a header missing from
+    # one of them, and the one that is missing it is the route that stays open.
+
+    ASSERTION_HEADER = "X-WiseFood-Member"
+    ASSERTION_TTL_SECONDS = 300
+
+    @classmethod
+    def _assertion_secret(cls) -> Optional[str]:
+        value = (os.getenv("FOODCHAT_ASSERTION_SECRET") or "").strip()
+        return value or None
+
+    # `/foodchat/members/{member_id}/...` — the third place a member can ride.
+    # Caught by pattern rather than by an argument each method has to remember
+    # to pass, for the same reason the header is minted in one place.
+    _MEMBER_PATH = re.compile(r"^/foodchat/members/([^/]+)/")
+
+    @classmethod
+    def _member_from(cls, endpoint: str, kwargs: Dict[str, Any]) -> Optional[str]:
+        """The member this request is about, wherever it happens to ride.
+
+        Three places, all of them real: the JSON body, the query string, and
+        the path. The header follows the payload rather than being passed
+        separately, so the two can never disagree about who is acting.
+        """
+        body = kwargs.get("json")
+        if isinstance(body, dict) and body.get("member_id"):
+            return str(body["member_id"])
+        params = kwargs.get("params")
+        if isinstance(params, dict) and params.get("member_id"):
+            return str(params["member_id"])
+        match = cls._MEMBER_PATH.match(endpoint or "")
+        if match:
+            return unquote(match.group(1))
+        return None
+
+    @classmethod
+    def _sign_member(cls, member_id: str, secret: str) -> str:
+        expires = int(time.time()) + cls.ASSERTION_TTL_SECONDS
+        # The separator is inside the signed payload, so a member id containing
+        # a dot cannot be shifted into the expiry field and re-signed.
+        payload = f"{member_id}|{expires}".encode()
+        digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return f"{member_id}.{expires}.{digest}"
+
     @classmethod
     async def request(cls, method: str, endpoint: str, **kwargs):
         client = cls._require_client()
+
+        secret = cls._assertion_secret()
+        member_id = cls._member_from(endpoint, kwargs)
+        if secret and member_id:
+            headers = dict(kwargs.pop("headers", None) or {})
+            headers[cls.ASSERTION_HEADER] = cls._sign_member(member_id, secret)
+            kwargs["headers"] = headers
 
         try:
             response = await client.request(method, endpoint, **kwargs)
@@ -185,6 +258,10 @@ class FoodChat:
     @classmethod
     async def put(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
         return await cls.request("PUT", endpoint, data=data, json=json, **kwargs)
+
+    @classmethod
+    async def patch(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
+        return await cls.request("PATCH", endpoint, data=data, json=json, **kwargs)
 
     @classmethod
     async def delete(cls, endpoint: str, **kwargs):
@@ -231,6 +308,22 @@ class FoodChat:
             payload["comment"] = comment
         return payload
 
+    # The timeout ladder, outermost to innermost:
+    #
+    #   UI              180s   generous; it is a person watching a spinner
+    #   gateway          90s   this, for anything that generates a plan
+    #   FoodChat turn    70s   its own budget — it sheds work and answers
+    #   Groq call        45s   one model call, bounded, one retry
+    #
+    # Each layer must be strictly larger than the one inside it. When that
+    # inverted — FoodChat had NO budget and Groq had no timeout — a slow turn
+    # produced the worst available outcome: this gateway cut the connection at
+    # 90 seconds, the member was told the plan failed, and FoodChat carried on,
+    # finished it and stored it. The plan existed; they found it on reload.
+    #
+    # 90 stays where it is precisely so FoodChat's 70-second budget is the
+    # thing that fires first, and the member gets a real (if plainer) answer
+    # instead of a severed request.
     @classmethod
     def _extra_long_timeout(cls) -> float:
         return 90.0
@@ -272,6 +365,37 @@ class FoodChat:
             f"/foodchat/sessions/{session_id}",
             params=cls._member_params(member_id),
         )
+
+    @classmethod
+    async def rename_session(cls, session_id: str, member_id: str, title: str):
+        """Give a session a member-facing name."""
+        return await cls.patch(
+            f"/foodchat/sessions/{session_id}",
+            json={"member_id": member_id, "title": title},
+        )
+
+    @classmethod
+    async def save_meal_plan(
+        cls,
+        session_id: str,
+        plan_id: str,
+        member_id: str,
+        saved: bool = True,
+        title: Optional[str] = None,
+    ):
+        """Save (or unsave) a plan so it outlives its conversation."""
+        payload: Dict[str, Any] = {"member_id": member_id, "saved": saved}
+        if title is not None:
+            payload["title"] = title
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/meal-plans/{plan_id}/save",
+            json=payload,
+        )
+
+    @classmethod
+    async def get_member_saved_plans(cls, member_id: str):
+        """Every plan the member saved, across all their sessions."""
+        return await cls.get(f"/foodchat/members/{member_id}/saved-plans")
 
     @classmethod
     async def get_meal_plans(cls, session_id: str, member_id: str):
@@ -446,6 +570,97 @@ class FoodChat:
                 "member_id": member_id,
                 "cooking_for": cooking_for,
             },
+        )
+
+    # ---------------------------------------------------------------- #
+    # Standing planning state — the pantry panel and the facet chips    #
+    # ---------------------------------------------------------------- #
+
+    @classmethod
+    async def get_planning_state(cls, session_id: str, member_id: str):
+        """What is standing for this session: pantry, facets, stated diet."""
+        return await cls.get(
+            f"/foodchat/sessions/{session_id}/planning-state",
+            params=cls._member_params(member_id),
+        )
+
+    @classmethod
+    async def set_pantry(cls, session_id: str, member_id: str, items: List[str]):
+        """Replace the pantry with exactly these items (the panel's save)."""
+        return await cls.put(
+            f"/foodchat/sessions/{session_id}/pantry",
+            json={"member_id": member_id, "items": items},
+        )
+
+    @classmethod
+    async def add_pantry_items(cls, session_id: str, member_id: str, items: List[str]):
+        """Add items, leaving the rest of the pantry alone."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/pantry",
+            json={"member_id": member_id, "items": items},
+        )
+
+    @classmethod
+    async def remove_pantry_item(cls, session_id: str, member_id: str, item: str):
+        """Tick one item off."""
+        return await cls.delete(
+            f"/foodchat/sessions/{session_id}/pantry/{quote(item, safe='')}",
+            params=cls._member_params(member_id),
+        )
+
+    @classmethod
+    async def add_facets(cls, session_id: str, member_id: str, values: List[str]):
+        """Ask for a taste the assistant did not infer."""
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/facets",
+            json={"member_id": member_id, "values": values},
+        )
+
+    @classmethod
+    async def remove_facet(cls, session_id: str, member_id: str, value: str):
+        """Take back one inferred facet — the removable chip on the plan."""
+        return await cls.delete(
+            f"/foodchat/sessions/{session_id}/facets/{quote(value, safe='')}",
+            params=cls._member_params(member_id),
+        )
+
+    @classmethod
+    async def replan(cls, session_id: str, member_id: str, plan_type: Optional[str] = None):
+        """Re-plan from the standing state. Generates a plan, so it gets the
+        same extended timeout as the other planning calls."""
+        payload: Dict[str, Any] = {"member_id": member_id}
+        if plan_type is not None:
+            payload["plan_type"] = plan_type
+        return await cls.post(
+            f"/foodchat/sessions/{session_id}/replan",
+            json=payload,
+            timeout=cls._extra_long_timeout(),
+        )
+
+    @classmethod
+    async def get_vocabularies(cls):
+        """The live facet vocabulary the recipe corpus actually carries."""
+        return await cls.get("/foodchat/vocabularies")
+
+    # ---------------------------------------------------------------- #
+    # Tool surface                                                      #
+    # ---------------------------------------------------------------- #
+
+    @classmethod
+    async def list_tools(cls):
+        """Every tool the agent can call, with its schema."""
+        return await cls.get("/foodchat/tools")
+
+    @classmethod
+    async def invoke_tool(
+        cls, tool_name: str, member_id: str, arguments: Dict[str, Any],
+    ):
+        """Run one tool by name. Some regenerate part of a plan, so this gets
+        the extended timeout rather than the default."""
+        return await cls.post(
+            f"/foodchat/tools/{tool_name}",
+            json={"member_id": member_id, "arguments": arguments},
+            timeout=cls._extra_long_timeout(),
         )
 
 

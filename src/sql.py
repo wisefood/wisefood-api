@@ -83,6 +83,10 @@ class DietaryGroup(str, enum.Enum):
     paleo = "paleo"
     whole30 = "whole30"
     mediterranean = "mediterranean"
+    # Present in the SQL enum and in schemas.DietaryGroupEnum but missing here,
+    # so a PATCH carrying it passed Pydantic and then raised ValueError inside
+    # DietaryGroup(dg) — a 500 on a value the schema advertises as valid.
+    diabetic_friendly = "diabetic_friendly"
 
 
 # ---------- SQLAlchemy Models ----------
