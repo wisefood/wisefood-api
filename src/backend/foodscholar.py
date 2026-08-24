@@ -310,6 +310,16 @@ class FoodScholar:
         )
 
     @classmethod
+    async def backfill_guide_page_summaries(
+        cls, guide_urn: str, *, dry_run: bool = True
+    ):
+        """Write extraction page summaries onto a guide's existing rules."""
+        return await cls.post(
+            f"/api/v1/guidelines/corpus/page-summaries/backfill/{guide_urn}",
+            params={"dry_run": dry_run},
+        )
+
+    @classmethod
     async def activate_guide_guidelines(
         cls,
         guide_urn: str,

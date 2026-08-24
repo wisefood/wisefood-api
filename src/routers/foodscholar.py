@@ -453,6 +453,20 @@ async def get_guideline_activation_plan(
 
 
 @router.post(
+    "/guidelines/corpus/page-summaries/{guide_urn:path}",
+    dependencies=[Depends(auth("admin,expert")), Depends(deny_guests)],
+)
+@render()
+async def backfill_guide_page_summaries(
+    request: Request, guide_urn: str, dry_run: bool = True
+):
+    """Backfill extraction page summaries onto a guide's existing rules."""
+    return await FOODSCHOLAR.backfill_guide_page_summaries(
+        guide_urn, dry_run=dry_run
+    )
+
+
+@router.post(
     "/guidelines/corpus/activate/{guide_urn:path}",
     dependencies=[Depends(auth("admin")), Depends(deny_guests)],
 )
