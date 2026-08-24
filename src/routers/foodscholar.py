@@ -6,6 +6,7 @@ import logging
 from auth import auth
 from schemas import (
     ArticleEnrichmentBatchRequest,
+    ArticleEnrichmentCriteriaBatchRequest,
     ArticleEnrichmentRequest,
     ArticleInput,
     ChatRequest,
@@ -151,6 +152,51 @@ async def enqueue_articles_enrichment(
             "requested_by": user["sub"],
         }
     )
+
+
+@router.get("/enrich/overview", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def get_enrichment_overview(request: Request):
+    """Corpus-wide enrichment coverage with per-journal breakdown."""
+    return await FOODSCHOLAR.get_enrichment_overview()
+
+
+@router.post(
+    "/enrich/batches",
+    dependencies=[Depends(auth("admin,expert"))],
+    status_code=202,
+)
+@render()
+async def enqueue_enrichment_batch_by_criteria(
+    request: Request, body: ArticleEnrichmentCriteriaBatchRequest
+):
+    """Queue an enrichment batch by criteria (journal, missing-only, limit)."""
+    user = kutils.current_user(request)
+    return await FOODSCHOLAR.enqueue_enrichment_batch(
+        {
+            "venue": body.venue,
+            "only_missing": body.only_missing,
+            "force": body.force,
+            "limit": body.limit,
+            "requested_by": user["sub"],
+        }
+    )
+
+
+@router.get("/enrich/batches", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def list_enrichment_batches(request: Request):
+    """Recent criteria batches, newest first."""
+    return await FOODSCHOLAR.list_enrichment_batches()
+
+
+@router.get(
+    "/enrich/batches/{batch_id}", dependencies=[Depends(auth("admin,expert"))]
+)
+@render()
+async def get_enrichment_batch(request: Request, batch_id: str):
+    """One batch's live progress."""
+    return await FOODSCHOLAR.get_enrichment_batch(batch_id)
 
 
 @router.get("/enrich/jobs", dependencies=[Depends(auth("admin,expert"))])

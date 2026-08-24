@@ -472,6 +472,22 @@ class ArticleEnrichmentBatchRequest(ArticleEnrichmentRequest):
     )
 
 
+class ArticleEnrichmentCriteriaBatchRequest(ArticleEnrichmentRequest):
+    """Queue article enrichment by selection criteria instead of URNs."""
+
+    venue: Optional[str] = Field(
+        default=None,
+        description="Restrict the batch to one journal (exact venue value)",
+    )
+    only_missing: bool = Field(
+        default=True,
+        description="Select only articles without enrichment",
+    )
+    limit: int = Field(
+        default=200, ge=1, le=2000, description="Maximum articles to queue"
+    )
+
+
 class EnrichmentSweeperPauseRequest(BaseModel):
     """Pause or resume the FoodScholar catalog enrichment sweeper."""
 

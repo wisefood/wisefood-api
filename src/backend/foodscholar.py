@@ -238,6 +238,22 @@ class FoodScholar:
         return await cls.delete(f"/api/v1/enrich/articles/{urn}")
 
     @classmethod
+    async def get_enrichment_overview(cls):
+        return await cls.get("/api/v1/enrich/overview")
+
+    @classmethod
+    async def enqueue_enrichment_batch(cls, payload: dict):
+        return await cls.post("/api/v1/enrich/batches", json=payload)
+
+    @classmethod
+    async def list_enrichment_batches(cls):
+        return await cls.get("/api/v1/enrich/batches")
+
+    @classmethod
+    async def get_enrichment_batch(cls, batch_id: str):
+        return await cls.get(f"/api/v1/enrich/batches/{batch_id}")
+
+    @classmethod
     async def get_enrichment_worker_status(cls):
         return await cls.get("/api/v1/enrich/worker")
 
