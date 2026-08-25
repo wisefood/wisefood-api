@@ -84,10 +84,17 @@ class DietaryGroupEnum(str, Enum):
 
 
 class RecipeRegionEnum(str, Enum):
-    """Supported nutrition regions for recipe lookups."""
-    US = "US"
+    """Supported nutrition regions for recipe lookups.
+
+    Mirrors the recipe backend's regional nutrition sources: three regional
+    composition tables plus EU as the global one. US is absent because the v4
+    regional API dropped USDA as a nutrition source -- it survives there only
+    for portion weights, which callers never select.
+    """
     IE = "IE"
     HU = "HU"
+    EU = "EU"
+    SI = "SI"
 
 
 # ---------- Household Member Profile Schemas ----------
@@ -849,7 +856,7 @@ class RecipeDetailsBatchRequest(BaseModel):
     recipe_ids: List[str] = Field(..., min_length=1, max_length=30)
     region: Optional[str] = Field(
         default=None,
-        description="Optional nutrition region selector (US, IE, HU, EU).",
+        description="Optional nutrition region selector (IE, HU, EU, SI).",
     )
 
 

@@ -175,7 +175,7 @@ async def get_recipe(
     request: Request,
     region: RecipeRegionEnum | None = Query(
         default=None,
-        description="Optional nutrition region selector: US, IE, or HU.",
+        description="Optional nutrition region selector: IE, HU, EU, or SI.",
     ),
     slim: bool = Query(
         default=False,
