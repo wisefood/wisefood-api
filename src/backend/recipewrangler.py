@@ -221,6 +221,8 @@ class RecipeWrangler:
         preferred_ingredients: list[str] = None,
         region: str = None,
         include_disabled: bool = False,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
         **filters,
     ):
         """Search recipes via the knowledge graph."""
@@ -230,6 +232,12 @@ class RecipeWrangler:
             "diet_tags": diet_tags or [],
             "preferred_ingredients": preferred_ingredients or [],
         }
+        # Only sent when the caller asked for them, so an unpaged client keeps
+        # getting RecipeWrangler's own defaults rather than ours.
+        if limit is not None:
+            payload["limit"] = limit
+        if offset is not None:
+            payload["offset"] = offset
         if region:
             payload["region"] = region
         if include_disabled:

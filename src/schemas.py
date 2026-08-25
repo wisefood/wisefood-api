@@ -826,6 +826,17 @@ class RecipeSearchRequest(BaseModel):
         description="When true, disabled (soft-deleted) recipes appear in results — "
                     "console/admin only; requires an admin or expert role",
     )
+    # Paging. RecipeWrangler's /recipes/search has always honoured these, but
+    # this model never declared them, so every question search silently
+    # collapsed to the downstream default of 10 and page 2 re-served page 1.
+    limit: Optional[int] = Field(
+        default=None, ge=1, le=100,
+        description="Page size. Omitted means the downstream default (10).",
+    )
+    offset: Optional[int] = Field(
+        default=None, ge=0,
+        description="Result offset, for paging a question search.",
+    )
 
 
 class RecipeDetailsBatchRequest(BaseModel):

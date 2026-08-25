@@ -236,6 +236,8 @@ async def search_recipes(
         preferred_ingredients=payload.preferred_ingredients,
         region=payload.region,
         include_disabled=payload.include_disabled,
+        limit=payload.limit,
+        offset=payload.offset,
         # Forwarded by name from the request model. Anything in
         # RECIPEWRANGLER._FILTER_FIELDS that the model also declares goes
         # through, so adding a facet is a schema change only.
