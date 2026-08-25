@@ -57,7 +57,11 @@ async def prompts(request: Request):
     return {"prompts": await LANGFUSE_READ.fetch_prompts(), "enabled": langfuse_read_enabled()}
 
 
-@router.get("/prompts/{name}", dependencies=[Depends(auth("admin,expert"))])
+# `{name:path}` because Langfuse prompt names are namespaced with slashes
+# ("foodchat/batch_grader_user"). A plain `{name}` never matches across a
+# `/`, so every namespaced prompt 404d and the console drawer showed
+# "Could not load this prompt."
+@router.get("/prompts/{name:path}", dependencies=[Depends(auth("admin,expert"))])
 @render()
 async def prompt_detail(request: Request, name: str):
     return {"prompt": await LANGFUSE_READ.fetch_prompt(name), "enabled": langfuse_read_enabled()}
