@@ -74,7 +74,12 @@ _TEXT_PROP_KEYS = frozenset({"q", "query", "question", "text", "comment", "term"
 _CONDITIONAL_PROP_KEYS = frozenset({"path", "from", "route", "url"})
 #: A route pattern: slash-separated segments of word characters, with bracketed
 #: or colon-prefixed parameters allowed. No query string, no origin, no spaces.
-_ROUTE_PATTERN = re.compile(r"^/[\w\-./\[\]:*]{0,200}$")
+#: Vue Router spells a dynamic segment `:id()` — with the parentheses — so a
+#: page pattern that arrived as `/sessions/:id()` was failing this check and
+#: losing its `path`, which is why session-page views showed a `from` and no
+#: destination. The UI now normalises those to `[id]`; the parens stay
+#: permitted here so an older client is not silently stripped either.
+_ROUTE_PATTERN = re.compile(r"^/[\w\-./\[\]():*]{0,200}$")
 
 def _tunable(name: str, default: int, low: int, high: int) -> int:
     """A throughput knob from the environment, clamped to something sane.
@@ -619,10 +624,18 @@ class ActivityRecorder:
         sampled: bool = False,
         occurred_at: Optional[datetime] = None,
         identity: Optional[Dict[str, Any]] = None,
+        inherit_route: bool = True,
     ) -> None:
         """Record one activity. Never raises, never blocks, never does I/O."""
         try:
-            resolved_route = route or context.get_route()
+            # The request context knows the route being served. For an event
+            # the gateway itself observes mid-request that is the event's
+            # route. For an event that *arrived over the ingest endpoint* it is
+            # the ingest endpoint — and inheriting it filed every page view
+            # under `/api/v1/analytics/events`, the URL the report travelled
+            # over rather than the page it was about. The ingest handlers say
+            # so explicitly; nobody else needs to.
+            resolved_route = route or (context.get_route() if inherit_route else None)
             resolved_app = app or app_for_route(resolved_route)
             if not self._admit(resolved_app, capability, sampled):
                 return

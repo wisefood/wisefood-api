@@ -635,3 +635,77 @@ class TestNobodyCanFloodUs:
             field = model.model_fields["events"]
             caps = [m for m in field.metadata if hasattr(m, "max_length")]
             assert caps and caps[0].max_length <= 200, model.__name__
+
+
+class TestWhatTheFirstRealSessionCaught:
+    """Bugs a real session report surfaced on the first day. Each of these
+    passed every test that existed and failed on live data, so the fixes are
+    pinned to the exact shapes that failed."""
+
+    def test_an_ingested_event_does_not_inherit_the_ingest_route(self, monkeypatch):
+        """Every page view was filed under `/api/v1/analytics/events` — the
+        URL the report travelled over, not the page it was about. The ingest
+        handlers opt out; the gateway's own mid-request recording (a `qa.ask`
+        recorded while serving `/foodscholar/qa/ask`) legitimately keeps it."""
+        import analytics.recorder as recorder_module
+        import context
+
+        rec = recorder_module.ActivityRecorder(queue_max=100)
+        rec._enabled = True
+        monkeypatch.setattr(recorder_module, "SETTINGS", _AlwaysOn())
+        tokens = context.bind(request_id="r1", route="/api/v1/analytics/events")
+        try:
+            # As the ingest endpoint calls it.
+            rec.record_event(
+                "page.view", app="platform", capability="client_events", inherit_route=False
+            )
+            # As the gateway's own request recording calls it.
+            rec.record_event("http.request", app="platform", capability="http_requests")
+        finally:
+            context.reset(tokens)
+        rows = [rec._queue.get_nowait() for _ in range(rec._queue.qsize())]
+        by_type = {row.values["event_type"]: row.values["route"] for row in rows}
+        assert by_type["page.view"] is None
+        # The gateway's own observation of a request keeps its route.
+        assert by_type["http.request"] == "/api/v1/analytics/events"
+
+    def test_vue_routers_dynamic_segment_survives_the_safe_path_check(self):
+        """Vue Router spells it `:id()`. The parentheses were failing the
+        pattern and every view of a dynamic page lost its destination."""
+        from analytics.recorder import _prop_is_safe
+
+        assert _prop_is_safe("path", "/console/insights/sessions/:id()") is True
+        assert _prop_is_safe("path", "/console/insights/sessions/[id]") is True
+        # Still not a licence for a resolved URL.
+        assert _prop_is_safe("path", "/sessions/b6uq?token=x") is False
+
+    def test_a_word_valued_confidence_does_not_crash_the_content_report(self):
+        """FoodScholar says "high" on some paths and 0.8 on others. Casting
+        "high" to NUMERIC 500ed the whole report. The guard is a regex on the
+        value, so only things that look like numbers are averaged."""
+        import inspect
+
+        from analytics.reports import content_report
+
+        source = inspect.getsource(content_report)
+        assert 'op("~")' in source, "the numeric guard is gone"
+        assert "by_confidence" in source, "the word-valued distribution is gone"
+
+
+class _AlwaysOn:
+    """Settings that admit everything, for tests about what gets recorded."""
+
+    def current(self):
+        return {}
+
+    def collecting(self, app):
+        return True
+
+    def captures(self, capability):
+        return True
+
+    def sample_rate(self, capability=None):
+        return 1.0
+
+    def get(self, key, default=None):
+        return default

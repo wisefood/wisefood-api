@@ -12,6 +12,7 @@ user gets is the id, not the data behind it.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -69,11 +70,17 @@ async def session_summary(
         # the session belonged to somebody and refused to say who, so the page
         # could not link on to that person's other sessions — which is the
         # first thing anyone wants after reading one.
+        # One row per person, not per (person, household member) pair. A
+        # household with three members produced the same user id three times
+        # on the page, which read as three people. The member ids are kept as
+        # a list against the one person they belong to.
         who = (
             await db.execute(
                 select(
                     ActivityEvent.user_id,
-                    ActivityEvent.member_id,
+                    func.array_agg(func.distinct(ActivityEvent.member_id)).filter(
+                        ActivityEvent.member_id.isnot(None)
+                    ),
                     func.count(),
                 )
                 .where(
@@ -81,7 +88,7 @@ async def session_summary(
                     (ActivityEvent.user_id.isnot(None))
                     | (ActivityEvent.member_id.isnot(None)),
                 )
-                .group_by(ActivityEvent.user_id, ActivityEvent.member_id)
+                .group_by(ActivityEvent.user_id)
                 .order_by(func.count().desc())
                 .limit(10)
             )
@@ -232,8 +239,15 @@ async def session_summary(
         # hold, because they never needed an identity.
         "identified_users": int(distinct_users or 0),
         "users": [
-            {"user_id": user_id, "member_id": member_id, "events": int(count)}
-            for user_id, member_id, count in who
+            {
+                "user_id": user_id,
+                # First member for the field the UI already renders, the whole
+                # list for anything that wants it.
+                "member_id": (members or [None])[0],
+                "member_ids": list(members or []),
+                "events": int(count),
+            }
+            for user_id, members, count in who
         ],
         "apps": [{"app": app, "events": int(count)} for app, count in apps],
         "duration_seconds": (
@@ -1469,8 +1483,16 @@ async def feedback_inbox(
     status: Optional[str] = None,
     app: Optional[str] = None,
     negative_only: bool = False,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Every surface's feedback in one triage list."""
+    """Every surface's feedback in one triage list.
+
+    Filterable by target so a curator opening one recipe can see what people
+    said about *that* recipe. Without it the only route to a complaint was the
+    platform-wide inbox, which is the wrong place to stand when the question is
+    "is there anything wrong with this dish".
+    """
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
     from sql import FeedbackRecord
 
@@ -1484,6 +1506,10 @@ async def feedback_inbox(
         query = query.where(
             FeedbackRecord.rating_value.in_(_NEGATIVE_VALUES)
         )
+    if target_type:
+        query = query.where(FeedbackRecord.target_type == target_type)
+    if target_id:
+        query = query.where(FeedbackRecord.target_id == str(target_id))
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
         total = await db.scalar(select(func.count()).select_from(query.subquery()))
@@ -2173,6 +2199,12 @@ async def content_report(*, days: int = 7, limit: int = 20, since: Optional[str]
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
         answered = ActivityEvent.event_type == "qa.answered"
+        # FoodScholar reports confidence as a word — "high", "medium", "low" —
+        # on some paths and as a number on others. Casting the word to NUMERIC
+        # failed the whole report. Only values that look numeric are averaged;
+        # the words get their own distribution below, which is the more
+        # useful reading of them anyway.
+        numeric = r"^-?[0-9]+(\.[0-9]+)?$"
         qa = (
             await db.execute(
                 select(
@@ -2180,14 +2212,15 @@ async def content_report(*, days: int = 7, limit: int = 20, since: Optional[str]
                     func.count().filter(prop("cache_hit").in_(("true", "True"))),
                     func.count().filter(prop("rag_enabled").in_(("true", "True"))),
                     func.avg(func.cast(prop("confidence"), Numeric)).filter(
-                        prop("confidence").isnot(None)
+                        prop("confidence").op("~")(numeric)
                     ),
                     func.avg(func.cast(prop("articles_consulted"), Numeric)).filter(
-                        prop("articles_consulted").isnot(None)
+                        prop("articles_consulted").op("~")(numeric)
                     ),
                 ).where(in_window, answered)
             )
         ).one()
+        qa_confidence_words = await top_by(db, "qa.answered", "confidence")
 
         qa_modes = await top_by(db, "qa.answered", "mode")
         qa_languages = await top_by(db, "qa.answered", "language")
@@ -2288,6 +2321,12 @@ async def content_report(*, days: int = 7, limit: int = 20, since: Optional[str]
             "with_retrieval": int(qa[2] or 0),
             "retrieval_rate": _ratio(int(qa[2] or 0), answers),
             "avg_confidence": round(float(qa[3]), 3) if qa[3] is not None else None,
+            # The word-valued confidence, as a distribution. Where the service
+            # says "high" rather than 0.8 this is the only reading there is.
+            "by_confidence": [
+                row for row in qa_confidence_words
+                if not re.match(numeric, str(row["value"]))
+            ],
             "avg_articles": round(float(qa[4]), 1) if qa[4] is not None else None,
             "by_mode": qa_modes,
             "by_language": qa_languages,

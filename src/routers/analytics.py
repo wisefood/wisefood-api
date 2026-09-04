@@ -169,6 +169,7 @@ async def ingest_events(request: Request, body: ActivityEventBatch):
             props=event.props,
             occurred_at=occurred_at,
             capability="client_events",
+            inherit_route=False,
         )
     return ActivityIngestResponse(accepted=len(body.events)).model_dump()
 
@@ -427,6 +428,7 @@ async def ingest_service_events(request: Request):
                 route=event.get("route"),
                 capability="client_events",
                 identity=identity,
+                inherit_route=False,
             )
         accepted += 1
     return ActivityIngestResponse(accepted=accepted).model_dump()
@@ -842,12 +844,20 @@ async def feedback_inbox_page(
     status: Optional[str] = None,
     app: Optional[str] = None,
     negative_only: bool = False,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
 ):
     """Every surface's feedback in one triage list."""
     from analytics.reports import feedback_inbox
 
     result = await feedback_inbox(
-        limit=limit, offset=offset, status=status, app=app, negative_only=negative_only
+        limit=limit,
+        offset=offset,
+        status=status,
+        app=app,
+        negative_only=negative_only,
+        target_type=target_type,
+        target_id=target_id,
     )
     RECORDER.record_event(
         "expert.feedback_reviewed",
