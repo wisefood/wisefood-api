@@ -1805,3 +1805,362 @@ class SavedMealPlanDeleteResponse(BaseModel):
     saved_meal_plan_id: str
     member_id: str
     deleted: bool
+
+
+# ------- Analytics Schemas -------
+#
+# Client-submitted telemetry. Two rules shape these models:
+#
+# 1. Identity is never accepted from the body. The caller's token is the only
+#    source of who they are; a field named `user_id` here would be a way to
+#    file activity under someone else's name.
+# 2. Event types come from an allowlist. `event_type` is an indexed column, so
+#    an unbounded set of client-invented values is both a cardinality problem
+#    and a way to make the console's own filters useless.
+
+#: Event types the browser and the SDK may submit. Server-side emissions are
+#: not restricted to this list — the gateway is trusted about its own routes.
+CLIENT_EVENT_TYPES = frozenset(
+    {
+        "session.start",
+        "page.view",
+        "feature.used",
+        "recipe.search",
+        "recipe.autocomplete",
+        "recipe.result_click",
+        "recipe.view",
+        "recipe.compare",
+        "qa.ask",
+        "qa.stream_abandoned",
+        "qa.citation_opened",
+        "chat.message",
+        "chat.plan_generated",
+        "chat.plan_saved",
+        "chat.tool_invoked",
+        "library.save",
+        "library.remove",
+        "favorite.add",
+        "favorite.remove",
+        "catalog.view",
+        "console.view",
+    }
+)
+
+#: Product surfaces an event may be attributed to.
+ANALYTICS_APPS = frozenset(
+    {"foodchat", "foodscholar", "recipewrangler", "catalog", "console", "platform"}
+)
+
+#: Serialised size cap for one event's `props`, in characters. Generous for a
+#: handful of ids and counts, small enough that a batch cannot be used to push
+#: arbitrary payloads into the database.
+MAX_EVENT_PROPS_CHARS = 4000
+
+
+class ActivityEventIn(BaseModel):
+    """One client-reported event."""
+
+    type: str = Field(description="Event type, from the client allowlist")
+    app: str = Field(default="platform", description="Product surface")
+    occurred_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "When it happened on the client. Batches are buffered, so this can "
+            "predate arrival; omitted means 'now'."
+        ),
+    )
+    props: Dict[str, Any] = Field(
+        default_factory=dict, description="Event-specific fields"
+    )
+
+    @field_validator("type")
+    @classmethod
+    def _known_type(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if cleaned not in CLIENT_EVENT_TYPES:
+            raise ValueError(f"Unknown event type '{cleaned}'")
+        return cleaned
+
+    @field_validator("app")
+    @classmethod
+    def _known_app(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in ANALYTICS_APPS:
+            raise ValueError(f"Unknown app '{cleaned}'")
+        return cleaned
+
+    @field_validator("props")
+    @classmethod
+    def _bounded_props(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        import json
+
+        try:
+            size = len(json.dumps(value, default=str))
+        except Exception as exc:
+            raise ValueError("props must be JSON-serialisable") from exc
+        if size > MAX_EVENT_PROPS_CHARS:
+            raise ValueError(
+                f"props too large ({size} chars, max {MAX_EVENT_PROPS_CHARS})"
+            )
+        return value
+
+
+class ActivityEventBatch(BaseModel):
+    """A batch of client events. Batched because a page view per request would
+    triple the request count the gateway serves."""
+
+    events: List[ActivityEventIn] = Field(min_length=1, max_length=50)
+
+
+# --- Real user monitoring ---------------------------------------------------
+#
+# Everything a browser may report about itself. The rule throughout is that a
+# client says what happened *to it* and never who it is: identity comes from
+# the token, the device from the request's own headers.
+
+
+class ClientSessionIn(BaseModel):
+    """What one browser session is running on.
+
+    Sent once per session and again when something material changes, e.g. the
+    window is resized across a breakpoint. Notably absent: the user agent and
+    the address. Both are read from the request itself, because a client that
+    could state them could also misstate them, and every report groups by the
+    parsed result.
+    """
+
+    session_id: str = Field(max_length=64)
+    app: str = Field(default="platform")
+    release: Optional[str] = Field(default=None, max_length=64)
+    screen_w: Optional[int] = Field(default=None, ge=0, le=32767)
+    screen_h: Optional[int] = Field(default=None, ge=0, le=32767)
+    viewport_w: Optional[int] = Field(default=None, ge=0, le=32767)
+    viewport_h: Optional[int] = Field(default=None, ge=0, le=32767)
+    device_pixel_ratio: Optional[float] = Field(default=None, ge=0, le=16)
+    color_scheme: Optional[Literal["light", "dark"]] = None
+    reduced_motion: Optional[bool] = None
+    timezone: Optional[str] = Field(default=None, max_length=64)
+    connection: Optional[str] = Field(default=None, max_length=16)
+
+    @field_validator("app")
+    @classmethod
+    def _known_app(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in ANALYTICS_APPS:
+            raise ValueError(f"Unknown app '{cleaned}'")
+        return cleaned
+
+
+class ClientErrorIn(BaseModel):
+    """One thing that broke in a browser."""
+
+    kind: Literal["error", "unhandledrejection", "vue", "http", "resource", "csp"]
+    app: str = Field(default="platform")
+    occurred_at: Optional[datetime] = None
+    name: Optional[str] = Field(default=None, max_length=128)
+    message: Optional[str] = Field(default=None, max_length=2000)
+    # Long, because a truncated stack often loses the only frame that matters.
+    # The recorder redacts and re-truncates it before it is stored.
+    stack: Optional[str] = Field(default=None, max_length=16000)
+    url_path: Optional[str] = Field(default=None, max_length=255)
+    line_no: Optional[int] = Field(default=None, ge=0, le=10_000_000)
+    col_no: Optional[int] = Field(default=None, ge=0, le=10_000_000)
+    handled: bool = False
+    release: Optional[str] = Field(default=None, max_length=64)
+    breadcrumbs: List[Dict[str, Any]] = Field(default_factory=list, max_length=40)
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("app")
+    @classmethod
+    def _known_app(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in ANALYTICS_APPS:
+            raise ValueError(f"Unknown app '{cleaned}'")
+        return cleaned
+
+    @field_validator("context")
+    @classmethod
+    def _bounded_context(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        import json
+
+        try:
+            size = len(json.dumps(value, default=str))
+        except Exception as exc:
+            raise ValueError("context must be JSON-serialisable") from exc
+        if size > MAX_EVENT_PROPS_CHARS:
+            raise ValueError(f"context too large ({size} chars)")
+        return value
+
+
+class ErrorStatusUpdate(BaseModel):
+    """Where an error group sits in triage."""
+
+    status: Literal["new", "acknowledged", "resolved", "ignored"]
+
+
+class ClientErrorBatch(BaseModel):
+    events: List[ClientErrorIn] = Field(min_length=1, max_length=25)
+
+
+class InteractionIn(BaseModel):
+    """One click, rage click, dead click, or scroll depth."""
+
+    app: str = Field(default="platform")
+    #: The route pattern, not the URL. A heatmap of `/recipes/[id]` is a
+    #: picture of the recipe page; a heatmap of `/recipes/1842` is one visit.
+    path: str = Field(max_length=255)
+    kind: Literal["click", "rage", "dead", "scroll"] = "click"
+    occurred_at: Optional[datetime] = None
+    element_key: Optional[str] = Field(default=None, max_length=160)
+    element_role: Optional[str] = Field(default=None, max_length=32)
+    #: Ten-thousandths of the page box, so a phone and a desktop can be drawn
+    #: on the same picture.
+    x_pct: Optional[int] = Field(default=None, ge=0, le=10_000)
+    y_pct: Optional[int] = Field(default=None, ge=0, le=10_000)
+    viewport_w: Optional[int] = Field(default=None, ge=0, le=32767)
+    viewport_h: Optional[int] = Field(default=None, ge=0, le=32767)
+    depth_pct: Optional[int] = Field(default=None, ge=0, le=10_000)
+    repeats: int = Field(default=1, ge=1, le=1000)
+
+    @field_validator("app")
+    @classmethod
+    def _known_app(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in ANALYTICS_APPS:
+            raise ValueError(f"Unknown app '{cleaned}'")
+        return cleaned
+
+
+class InteractionBatch(BaseModel):
+    #: Larger than the event batch: clicks arrive in bursts and the whole point
+    #: of buffering them is to make one request out of many.
+    events: List[InteractionIn] = Field(min_length=1, max_length=200)
+
+
+class WebVitalIn(BaseModel):
+    """One page-speed measurement, as the browser made it."""
+
+    app: str = Field(default="platform")
+    path: str = Field(max_length=255)
+    metric: Literal["LCP", "CLS", "INP", "TTFB", "FCP"]
+    #: Milliseconds, except CLS which is unitless. Capped at ten minutes: a
+    #: larger figure is a suspended tab, not a page load.
+    value: float = Field(ge=0, le=600_000)
+    rating: Optional[Literal["good", "needs-improvement", "poor"]] = None
+    navigation_type: Optional[str] = Field(default=None, max_length=16)
+    occurred_at: Optional[datetime] = None
+
+    @field_validator("app")
+    @classmethod
+    def _known_app(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in ANALYTICS_APPS:
+            raise ValueError(f"Unknown app '{cleaned}'")
+        return cleaned
+
+
+class WebVitalBatch(BaseModel):
+    events: List[WebVitalIn] = Field(min_length=1, max_length=50)
+
+
+class ActivityIngestResponse(BaseModel):
+    accepted: int = Field(description="Events queued for recording")
+    #: True when the platform is not collecting. The batch was still accepted —
+    #: a client must never have to care whether analytics is on.
+    discarded: bool = False
+
+
+class PlatformFeedbackRequest(BaseModel):
+    """Feedback on anything, from anywhere: the satisfaction widget, a recipe,
+    an article, an answer."""
+
+    target_type: Literal[
+        "qa_answer",
+        "chat_message",
+        "recipe",
+        "guide",
+        "article",
+        "textbook",
+        "platform",
+    ] = "platform"
+    target_id: Optional[str] = Field(default=None, max_length=512)
+    rating_kind: Literal["thumbs", "likert5", "ab", "helpful"] = "likert5"
+    rating_value: Optional[str] = Field(default=None, max_length=32)
+    rating_value_num: Optional[float] = Field(default=None, ge=0, le=10)
+    reason: Optional[str] = Field(default=None, max_length=128)
+    comment: Optional[str] = Field(default=None, max_length=4000)
+    app: str = Field(default="platform")
+
+    @field_validator("app")
+    @classmethod
+    def _known_app(cls, value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if cleaned not in ANALYTICS_APPS:
+            raise ValueError(f"Unknown app '{cleaned}'")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _has_a_signal(self):
+        if self.rating_value is None and self.rating_value_num is None:
+            raise ValueError(
+                "Provide at least one of 'rating_value' or 'rating_value_num'."
+            )
+        return self
+
+
+class AnalyticsConsentUpdate(BaseModel):
+    """The user's answer to "may we record what you do here?"."""
+
+    enabled: bool = Field(description="True to allow, False to withdraw")
+    version: str = Field(
+        default="1.0", min_length=1, max_length=16,
+        description="Version of the privacy text they were shown",
+    )
+
+
+class AnalyticsConsentStatus(BaseModel):
+    """Whether this user's activity may be recorded under their name.
+
+    `decided` distinguishes "said no" from "never asked", which is the whole
+    difference between the opt-in and opt-out readings.
+    """
+
+    enabled: bool
+    decided: bool
+    decided_at: Optional[datetime] = None
+    mode: str = Field(description="'opt_in' or 'opt_out' — how silence is read")
+
+
+class FeedbackStatusUpdate(BaseModel):
+    """Where a piece of feedback sits in the triage workflow."""
+
+    status: Literal["new", "triaged", "resolved"]
+
+
+class ExpertReviewCreate(BaseModel):
+    """An expert's verdict on something a user asked or complained about.
+
+    No reviewer field: the token says who is reviewing. A body that could name
+    the reviewer would let one expert sign a verdict with another's name, which
+    is worse than having no record at all.
+    """
+
+    target_type: Literal[
+        "qa_answer", "chat_message", "feedback", "guideline", "recipe", "article"
+    ]
+    target_id: str = Field(min_length=1, max_length=512)
+    verdict: Literal[
+        "correct", "partially_correct", "incorrect", "unsafe", "off_topic", "unclear"
+    ]
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    tags: Optional[List[str]] = Field(default=None, max_length=20)
+    #: The gateway correlation id of the answer being judged, so the verdict
+    #: can be joined back to the request that produced it.
+    request_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class AnalyticsSettingUpdate(BaseModel):
+    """A single runtime setting. The key must already be known — see
+    `analytics.settings.DEFAULTS`."""
+
+    value: Any = Field(description="New value, of the same shape as the default")

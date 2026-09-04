@@ -19,7 +19,13 @@ import kutils
 from auth import auth
 from exceptions import InternalError
 from routers.generic import render
-from schemas import UserConsentCreate, UserConsentRecord, UserConsentStatus
+from schemas import (
+    AnalyticsConsentStatus,
+    AnalyticsConsentUpdate,
+    UserConsentCreate,
+    UserConsentRecord,
+    UserConsentStatus,
+)
 from api.v1.users import USER_CONSENT, DEFAULT_CONSENT_TYPE
 
 logger = logging.getLogger(__name__)
@@ -184,3 +190,78 @@ async def api_record_my_consent(
     )
 
     return UserConsentRecord(**consent)
+
+
+@router.get(
+    "/me/analytics-consent",
+    dependencies=[Depends(auth())],
+    summary="Whether this user's activity may be recorded under their name",
+)
+@render()
+async def api_get_my_analytics_consent(request: Request):
+    """Resolve the analytics consent question to a single yes or no.
+
+    The ledger is append-only and has no notion of revocation, so withdrawal is
+    recorded as its own row kind and the later of the two answers wins. The UI
+    should not have to know that: it gets one boolean.
+    """
+    from analytics import CONSENT_GRANT, CONSENT_OPT_OUT, consent_mode
+
+    user_id = kutils.current_user(request)["sub"]
+    granted = await USER_CONSENT.get_latest_consent(user_id, CONSENT_GRANT)
+    declined = await USER_CONSENT.get_latest_consent(user_id, CONSENT_OPT_OUT)
+
+    granted_at = granted["granted_at"] if granted else None
+    declined_at = declined["granted_at"] if declined else None
+
+    if declined_at and (not granted_at or declined_at >= granted_at):
+        enabled, decided_at = False, declined_at
+    elif granted_at:
+        enabled, decided_at = True, granted_at
+    else:
+        # Never asked. What silence means is a deployment decision.
+        enabled, decided_at = consent_mode() == "opt_out", None
+
+    return AnalyticsConsentStatus(
+        enabled=enabled,
+        decided=bool(granted_at or declined_at),
+        decided_at=decided_at,
+        mode=consent_mode(),
+    )
+
+
+@router.put(
+    "/me/analytics-consent",
+    dependencies=[Depends(auth())],
+    summary="Allow or withdraw recording of this user's activity",
+)
+@render()
+async def api_set_my_analytics_consent(
+    request: Request, body: AnalyticsConsentUpdate
+):
+    """Record the user's answer, and make it take effect immediately.
+
+    Both answers append to the same append-only ledger, so the audit trail
+    shows what was agreed and when, including a later change of mind. The
+    recorder caches consent decisions, so the cache entry is dropped here
+    rather than left to expire — a user who has just withdrawn consent should
+    not see their next few minutes recorded anyway.
+    """
+    from analytics import CONSENT, CONSENT_GRANT, CONSENT_OPT_OUT, consent_mode
+
+    user_id = kutils.current_user(request)["sub"]
+    consent_type = CONSENT_GRANT if body.enabled else CONSENT_OPT_OUT
+    consent = await USER_CONSENT.record_consent(
+        user_id=user_id,
+        version=body.version,
+        consent_type=consent_type,
+        ip_address=client_ip(request),
+    )
+    CONSENT.invalidate(user_id)
+
+    return AnalyticsConsentStatus(
+        enabled=body.enabled,
+        decided=True,
+        decided_at=consent["granted_at"],
+        mode=consent_mode(),
+    )

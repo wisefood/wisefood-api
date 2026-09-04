@@ -18,6 +18,10 @@ RUN chmod +x /app/entrypoint.sh
 
 COPY ./schemas /app/schemas
 
+# The retention CronJob runs out of here. Without this the job's image has no
+# script to run, and the failure only shows up on the first scheduled night.
+COPY ./scripts /app/scripts
+
 WORKDIR /app/src
 EXPOSE ${PORT:-8000}
 

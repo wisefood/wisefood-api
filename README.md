@@ -33,6 +33,7 @@ Think of it as the **backend-for-frontend (BFF)** and **security perimeter** for
 - [Data Model (PostgreSQL)](#data-model-postgresql)
 - [API Surface](#api-surface)
 - [Observability](#observability)
+- [Activity Analytics](#activity-analytics)
 - [GDPR / Data Erasure](#gdpr--data-erasure)
 - [Repository Structure](#repository-structure)
 - [Running the Service](#running-the-service)
@@ -129,25 +130,31 @@ The router authenticates and envelopes; the client forwards the call over HTTP a
 
 ## Request Lifecycle
 
-1. **CORS middleware** vets the origin (`src/main.py`).
-2. **Identity middleware** best-effort-decodes the bearer token into a context variable, so proxied calls carry the caller's identity downstream by default (never rejects here — see below).
+1. **Request-context middleware** (`src/middleware.py`) assigns the request a correlation id, resolves the caller best-effort into a context variable, and echoes the id on the response (never rejects here — see below).
+2. **CORS middleware** vets the origin (`src/main.py`).
 3. **Router** matches the path; its `Depends(auth(...))` dependency verifies the token and enforces role requirements.
 4. For **owned** domains: the router calls an **entity** in `src/api/v1/`, which applies ownership/business rules and reads/writes PostgreSQL via `src/sql.py`.
    For **proxied** domains: the router calls a **backend HTTP client** in `src/backend/`, which forwards to the downstream service.
 5. The **`@render()` decorator** wraps the result in the standard success envelope.
 6. Any raised `APIException` is caught by the global handler and rendered as the standard error shape.
 
+### Correlation (`X-Request-Id`)
+
+Every request gets an id: the caller's `X-Request-Id` if it is plainly safe, otherwise a fresh one. It is echoed on the response (and exposed through CORS, so the browser can read it), stamped on every log line this service emits, and **forwarded on every proxied call** — so FoodChat, FoodScholar and RecipeWrangler log the same id for the work they do on this request's behalf. A caller-supplied id that fails validation is replaced outright rather than sanitised, because it reaches log lines and outbound headers.
+
+Set `LOG_FORMAT=json` to get one JSON object per line, including the `extra={...}` fields the text formatter drops. `REQUEST_LOG_ENABLED=true` adds one INFO line per completed request.
+
+The middleware is **pure ASGI**, not `BaseHTTPMiddleware`: the latter runs the application in a child task, so a value set by a route is not visible when the middleware regains control — which is exactly what the activity recorder needs in order to learn which member a request acted on.
+
 ### Identity forwarding (zero-trust downstream)
 
-Downstream services do not re-authenticate — but they learn *who* the caller is in two different ways. **RecipeWrangler** performs **no authentication of its own** and trusts identity **headers** from this gateway. To make that safe *and* automatic, the gateway sets identity as **middleware**, not per-route:
+Downstream services do not re-authenticate — but they learn *who* the caller is in two different ways. **RecipeWrangler** performs **no authentication of its own** and trusts identity **headers** from this gateway. To make that safe *and* automatic, the same middleware resolves identity for every request rather than per-route:
 
 ```python
-# src/main.py — runs for every request
-@api.middleware("http")
-async def rw_identity_middleware(request, call_next):
-    token = kutils.current_user(request)      # best-effort, never raises
-    reset = CURRENT_TOKEN_PAYLOAD.set(token)
-    ...
+# src/middleware.py — runs for every request
+payload = await self._token_payload(headers)   # best-effort, never raises,
+                                               # off the event loop, briefly cached
+rw_token = CURRENT_TOKEN_PAYLOAD.set(payload)
 ```
 
 The RecipeWrangler client then attaches the caller's identity as headers (`X-User-Sub`, `X-User-Name`, `X-User-Roles`) derived from the **verified** token (`src/backend/recipewrangler.py`). Because it's middleware, a newly added proxied endpoint forwards identity by default instead of relying on someone remembering to. Authorization itself still lives in each route's `Depends(auth(...))`; the middleware decode is purely to *tell downstream who the caller is*, and an absent/unreadable token simply makes the downstream call anonymous.
@@ -305,9 +312,88 @@ The service exposes a **read-only** window onto the platform's Langfuse instance
 
 ---
 
+## Activity Analytics
+
+Off by default. `ANALYTICS_ENABLED=true` turns on recording of what people do,
+so questions like "queries per user", "trending recipe searches", "tokens and
+cost per user" and "what did users tell us about the answers" can be answered
+from SQL rather than guessed at.
+
+**Storage** — schema `analytics` in the same PostgreSQL database
+(`schemas/50_analytics.sql`): `event`, `search_query`, `llm_usage`, `feedback`,
+`expert_review`, `settings`. Separate from `wisefood` so it can be granted
+read-only to a reporting tool without exposing household data, and dropped
+without touching anything a user owns. Nothing in it has a foreign key into
+`wisefood` — analytics rows outlive the households they describe.
+
+**The recorder** (`src/analytics/`) never affects the request being recorded.
+`record_*` snapshots the request context and returns; a background task drains a
+bounded queue and writes in batches. A full queue drops and counts, a failed
+write drops and counts, and every counter is visible at
+`GET /api/v1/analytics/health`, so "no data" can be told apart from "throwing
+data away".
+
+**Where events come from**
+- the `@render()` decorator, one `http.request` per enveloped route;
+- route handlers, for domain actions;
+- `POST /analytics/events` and `/analytics/feedback` — the browser and the SDK,
+  with an allowlisted event type, a capped batch, and identity taken from the
+  token, never the body;
+- `POST /analytics/internal/events` — platform services, HMAC-signed, and the
+  only caller permitted to say who an event belongs to (`ANALYTICS_INGEST_SECRET`;
+  unset closes the endpoint rather than opening it).
+
+**Tracing** — LLM tracing has its own switches, `tracing.enabled` and
+`tracing.langfuse`, honoured by every service. Services poll
+`GET /api/v1/analytics/runtime-flags` (signed with the ingest secret) every 30
+seconds, so tracing can be stopped platform-wide from the console without
+unsetting keys and rolling pods. It fails open: a service that cannot reach the
+gateway keeps tracing, because a control plane that failed closed would stop
+tracing on every hiccup. Prompt management is deliberately not gated — the same
+Langfuse client serves it, and switching tracing off must not drop every prompt
+back to its in-code fallback.
+
+**Reading traces** — raw Langfuse traces are **admin only**; they carry the
+prompt a person typed and the answer they got, for whoever was using the
+platform. Aggregates stay admin+expert. Experts review answer quality through
+the Q&A endpoints, which are scoped and consent-aware. Every read of traces or
+of the review surface is itself recorded.
+
+**Consent** — an event from a user who has not consented is still recorded, but
+its identity columns and any text they typed are NULL: a count of how many
+people searched for something is not personal data, a list of who they were is.
+`ANALYTICS_CONSENT_MODE` (`opt_in`, the default, or `opt_out`) decides only what
+silence means. Users answer through `GET|PUT /api/v1/users/me/analytics-consent`,
+which appends to the same append-only ledger as service consent. Consent is
+evaluated when the batch is written, so withdrawing it also covers events still
+in the queue.
+
+**Sessions** — the browser mints a short, readable id per tab
+(`k3f9-2xa7-lm4q`), sends it as `X-Client-Session`, and **shows it to the user in
+the page footer**. Every recorded row carries it, so quoting that id to support
+finds every search, question and meal plan from that sitting:
+`GET /api/v1/analytics/sessions/{id}` returns the counts and an ordered
+timeline. Reading a session is admin/expert only — what the user gets is the id,
+which is useless to anyone who cannot query it. The id is not an identity: it
+lives in `sessionStorage`, dies with the tab, resets after 30 minutes idle and
+resets when the signed-in user changes, so it can never span two accounts.
+
+**Runtime switches** — `analytics.settings`, editable by an admin through
+`PUT /api/v1/analytics/settings/{key}` with no redeploy: master pause, per-app
+on/off, per-capability capture flags, sample rate. They only ever narrow what
+`ANALYTICS_ENABLED` already permits.
+
+---
+
 ## GDPR / Data Erasure
 
-`src/erasure.py` implements right-to-erasure. `purge_user(user_id)` deletes the user's households and members (which cascade to profiles, meal plans, saved items, favourites, adapted recipes), removes their FoodChat sessions downstream, and optionally deletes the Keycloak user itself.
+`src/erasure.py` implements right-to-erasure. Analytics rows are **anonymised in
+place** rather than deleted — the identity columns and free-text queries are
+nulled, the row stays. Deleting them would silently change aggregates that were
+already reported: last month's active-user count would drop when someone closes
+their account today.
+
+`purge_user(user_id)` deletes the user's households and members (which cascade to profiles, meal plans, saved items, favourites, adapted recipes), removes their FoodChat sessions downstream, and optionally deletes the Keycloak user itself.
 
 Ordering is deliberate: the account deletion must not be blocked by a failure elsewhere, or the caller would be left logged into an account they asked to erase. The consent ledger (`user_consent`) is intentionally **retained** as a record that consent existed — the privacy notice covers this. Self-service deletion is wired at `DELETE /api/v1/users/me` (`src/routers/users.py`); guest erasure is the separate flow described above.
 

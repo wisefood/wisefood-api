@@ -1,6 +1,8 @@
 from typing import Optional
 
 import kutils
+import context
+from analytics import RECORDER
 from api.v1.household_members import HOUSEHOLD_MEMBER
 from api.v1.households import HOUSEHOLD
 from auth import auth
@@ -49,6 +51,10 @@ async def verify_member_access(request: Request, member_id: str):
     ):
         raise AuthorizationError(detail="You do not have access to this member")
 
+    # Recorded only once access is granted, so the activity context can never
+    # name a member the caller was not allowed to act on.
+    context.set_member_id(member_id)
+    context.set_household_id(household.get("id"))
     return member, household
 
 
@@ -393,6 +399,20 @@ async def update_diners(
         member_id=payload.member_id,
         cooking_for=payload.cooking_for,
     )
+
+
+# There is deliberately no gateway proxy for FoodChat's member feedback listing.
+#
+# Two reasons, and the second is the real one. First, every proxy here that
+# names a member must authorize that member (see
+# tests/test_foodchat_state_proxy.py) — an expert reading someone else's
+# feedback cannot satisfy that, and carving out an exception would weaken the
+# invariant for the one route that wanted it. Second, reading FoodChat's table
+# directly would return comments regardless of whether their author consented
+# to analytics; the feedback inbox in `analytics.feedback` applies consent and
+# carries FoodScholar's and the platform widget's feedback alongside chat's.
+# The inbox is the reviewing surface. FoodChat's own endpoint stays, scoped to
+# a member and guarded by the signed assertion.
 
 
 @router.post(

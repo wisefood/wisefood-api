@@ -9,6 +9,8 @@ from urllib.parse import quote, unquote
 
 import httpx
 
+import context
+
 from exceptions import (
     APIException,
     AuthenticationError,
@@ -218,9 +220,12 @@ class FoodChat:
 
         secret = cls._assertion_secret()
         member_id = cls._member_from(endpoint, kwargs)
+        # The correlation id rides on every call, signed assertion or not, so
+        # FoodChat's lines for this turn carry the same id as the gateway's.
+        headers = {**context.outbound_headers(), **(kwargs.pop("headers", None) or {})}
         if secret and member_id:
-            headers = dict(kwargs.pop("headers", None) or {})
             headers[cls.ASSERTION_HEADER] = cls._sign_member(member_id, secret)
+        if headers:
             kwargs["headers"] = headers
 
         try:
@@ -244,6 +249,20 @@ class FoodChat:
             ) from exc
 
         return cls._decode_response(response)
+
+    @classmethod
+    async def get_member_feedback(cls, member_id: str, params: Dict[str, Any]):
+        """One member's chat ratings.
+
+        Member-scoped on purpose: FoodChat authenticates nobody, so an unscoped
+        listing there would hand every member's comments to anything that can
+        reach the port. The cross-member view experts need is the gateway's own
+        feedback inbox, which carries every surface's feedback together.
+        """
+        return await cls.get(
+            f"/foodchat/members/{quote(str(member_id), safe='')}/feedback",
+            params=params,
+        )
 
     @classmethod
     async def get(

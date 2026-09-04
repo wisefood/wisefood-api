@@ -37,6 +37,9 @@ _DEFAULT_BUDGETS = {
     "qa": 20,          # foodscholar Q&A
     "search": 60,      # LLM-backed recipe/literature search
     "sessions": 10,    # chat session creations
+    # Telemetry batches, not user actions: one batch carries up to 50 events,
+    # so this is a ceiling on volume rather than on what a guest may do.
+    "analytics": 300,
     "default": 40,
 }
 

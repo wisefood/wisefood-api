@@ -14,7 +14,61 @@ from pydantic import BaseModel
 
 from exceptions import APIException
 
+import context
+
 log = getLogger(__name__)
+
+# Resolved lazily and cached: `main` imports this module, so it cannot be
+# imported at module scope here. The setting is read once at startup and never
+# changes, and a service running without `main` (a unit test importing a router
+# in isolation) simply gets the default.
+_REQUEST_LOG: Optional[bool] = None
+
+
+def _request_log_enabled() -> bool:
+    global _REQUEST_LOG
+    if _REQUEST_LOG is None:
+        try:
+            from main import config
+
+            _REQUEST_LOG = bool(config.settings.get("REQUEST_LOG_ENABLED", False))
+        except Exception:
+            _REQUEST_LOG = False
+    return _REQUEST_LOG
+
+
+def _route_template(req: Request) -> Optional[str]:
+    """The matched route's pattern, e.g. `/api/v1/members/{member_id}/profile`.
+
+    Starlette has finished routing by the time a handler runs, so
+    `scope["route"]` is set here even though it is not yet set when the
+    middleware first sees the request. The pattern is what analytics wants: it
+    groups every member's profile fetch under one route instead of one per id,
+    and it never contains a root path.
+    """
+    route = req.scope.get("route")
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return None
+
+
+def _bind_route(req: Request) -> None:
+    """Make the route visible to everything recorded during this handler.
+
+    The middleware cannot do this: it runs before routing. Without it every
+    event recorded from a handler — a search, a question — carried no route and
+    fell into the `platform` bucket, which broke every per-app report while
+    looking perfectly healthy. The request itself is recorded by the
+    middleware, which sees every response including the ones dependencies
+    reject before a handler runs.
+    """
+    try:
+        template = _route_template(req)
+        if template:
+            context.set_route(template)
+    except Exception:
+        pass
 
 # ---------- Success envelope ----------
 class APIEnvelope(BaseModel):
@@ -95,7 +149,13 @@ def render(
 
             started = time.perf_counter()
             ev = event or func.__name__
-            rid = getattr(getattr(req, "state", None), "request_id", None)
+            _bind_route(req)
+            # The middleware is the authority on the correlation id; the
+            # request state is the fallback for a request that somehow bypassed
+            # it (a test calling a handler directly, say).
+            rid = context.get_request_id() or getattr(
+                getattr(req, "state", None), "request_id", None
+            )
 
             try:
                 if is_coro:
@@ -104,9 +164,24 @@ def render(
                     result = await run_in_threadpool(func, *args, **kwargs)
 
                 if isinstance(result, Response):
-                    return result 
+                    return result
                 if map_result:
                     result = map_result(result)
+
+                duration = (time.perf_counter() - started) * 1000
+
+                if _request_log_enabled():
+                    logger.info(
+                        f"api.request:{ev}",
+                        extra={
+                            "method": req.method,
+                            "path": req.url.path,
+                            "status": 200,
+                            "duration_ms": round(duration, 2),
+                            "request_id": rid,
+                            "member_id": context.get_member_id(),
+                        },
+                    )
 
                 return _ok(result, req)
 
@@ -128,6 +203,11 @@ def render(
                     },
                     exc_info=exc.status_code >= 500,
                 )
+                # A 5xx APIException is a genuine server fault that happens
+                # to have been given a shape; a 4xx is the caller's problem and
+                # is already counted as a request status.
+                if exc.status_code >= 500:
+                    _record_server_error(exc, req, exc.status_code, handled=True)
                 raise  # handled by global APIException handler
 
             except Exception as exc:
@@ -141,11 +221,38 @@ def render(
                         "request_id": rid,
                     },
                 )
+                # This is where every unexpected server error ends up, so it
+                # is the one hook that makes backend faults visible in the
+                # console instead of only in a pod log that rotates.
+                _record_server_error(exc, req, 500, handled=False)
                 raise APIException.from_unexpected(exc) from exc
 
         return async_wrapper  # Always return the async wrapper
 
     return decorator
+
+
+def _record_server_error(exc, req, status: int, *, handled: bool) -> None:
+    """File an exception as an error occurrence. Never raises.
+
+    Imported inside the function because `analytics` imports a good deal of the
+    application, and this module is imported by nearly every router.
+    """
+    try:
+        from analytics import RECORDER
+
+        route = getattr(getattr(req, "scope", {}), "get", lambda _k: None)("route")
+        RECORDER.record_server_error(
+            exc=exc,
+            route=getattr(route, "path", None) or context.get_route(),
+            method=getattr(req, "method", None),
+            status=status,
+            handled=handled,
+        )
+    except Exception:
+        # An analytics failure inside an exception handler would replace a
+        # useful error with a useless one.
+        pass
 
 
 def install_error_handler(app: FastAPI) -> None:

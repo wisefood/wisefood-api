@@ -112,6 +112,56 @@ class LangfuseRead:
             return None
 
     @classmethod
+    async def push_score(
+        cls,
+        *,
+        trace_id: str,
+        name: str,
+        value,
+        comment: Optional[str] = None,
+    ) -> Optional[str]:
+        """Attach an expert's verdict to a trace, and return the score's id.
+
+        The schema has always described doing this and nothing ever did, which
+        left every expert judgement stranded in one database with no way to see
+        it beside the trace it is about. Pushing it makes the verdict visible
+        where the answer is, to anyone debugging that answer.
+
+        Returns None on any failure, including Langfuse being switched off or
+        unreachable. Deliberately: an expert's verdict is already stored by the
+        time this runs, and losing the annotation is a smaller harm than losing
+        the review because a third-party service was down. Also honours the
+        platform tracing switch — an operator who turned tracing off did not
+        expect the console to keep writing to Langfuse.
+        """
+        client = cls._get_client()
+        if client is None or not trace_id:
+            return None
+        try:
+            from analytics import SETTINGS
+
+            if not SETTINGS.tracing_enabled("langfuse"):
+                return None
+        except Exception:
+            pass
+        payload: Dict[str, Any] = {
+            "traceId": trace_id,
+            "name": name,
+            "value": value,
+            "dataType": "NUMERIC" if isinstance(value, (int, float)) else "CATEGORICAL",
+        }
+        if comment:
+            payload["comment"] = comment[:1000]
+        try:
+            response = await client.post("/api/public/scores", json=payload)
+            response.raise_for_status()
+            body = response.json()
+            return str(body.get("id") or "")[:64] or None
+        except Exception:
+            logger.warning("langfuse.score_push_failed", exc_info=True)
+            return None
+
+    @classmethod
     async def reachable(cls) -> bool:
         client = cls._get_client()
         if client is None:

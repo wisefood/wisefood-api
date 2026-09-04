@@ -24,6 +24,8 @@ from schemas import (
     SummarizeRequest,
 )
 import kutils
+import context
+from analytics import RECORDER
 from backend.foodscholar import FOODSCHOLAR
 from budget import deny_guests, guest_budget
 from api.v1.households import HOUSEHOLD
@@ -52,6 +54,10 @@ async def verify_member_access(request: Request, member_id: str):
     ):
         raise AuthorizationError(detail="You do not have access to this member")
 
+    # Recorded only once access is granted, so the activity context can never
+    # name a member the caller was not allowed to act on.
+    context.set_member_id(member_id)
+    context.set_household_id(household.get("id"))
     return member, household
 
 
@@ -334,10 +340,118 @@ async def ask_question_stream(request: Request, body: QARequest):
     )
 
 
+# ---------------------------------------------------------------- review ----
+#
+# admin+expert, not admin-only: reviewing whether an answer was any good is the
+# expert's job, and it is the reason this whole surface exists. That is a
+# narrower grant than raw Langfuse traces, which stay admin-only — those carry
+# every internal agent prompt for whoever was using the platform, where these
+# are scoped to questions asked of FoodScholar and carry consent-aware
+# identity.
+#
+# Every read is recorded, because "who looked at the userbase's questions" is
+# exactly the kind of privileged action the platform has never kept a record of.
+
+
+@router.get("/qa/requests", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def list_qa_requests(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    user_id: Optional[str] = None,
+    member_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    language: Optional[str] = None,
+    mode: Optional[str] = None,
+    search: Optional[str] = None,
+    has_feedback: Optional[bool] = None,
+    negative_only: bool = False,
+):
+    """Questions that were asked, newest first, with their feedback counts."""
+    params = {
+        "limit": limit,
+        "offset": offset,
+        "user_id": user_id,
+        "member_id": member_id,
+        "correlation_id": correlation_id,
+        "language": language,
+        "mode": mode,
+        "search": search,
+        "has_feedback": has_feedback,
+        "negative_only": negative_only,
+    }
+    result = await FOODSCHOLAR.list_qa_requests(
+        {k: v for k, v in params.items() if v is not None}
+    )
+    RECORDER.record_event(
+        "expert.qa_reviewed",
+        app="console",
+        props={
+            "scope": "list",
+            "returned": len((result or {}).get("items") or []),
+            "negative_only": bool(negative_only),
+            "filtered_user": bool(user_id),
+        },
+    )
+    return result
+
+
+@router.get("/qa/requests/{request_id}", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def get_qa_request(request: Request, request_id: str):
+    """One question with its answers, sources, pipeline trace and feedback."""
+    result = await FOODSCHOLAR.get_qa_request(request_id)
+    RECORDER.record_event(
+        "expert.qa_reviewed",
+        app="console",
+        props={"scope": "detail", "qa_request_id": request_id},
+    )
+    return result
+
+
+@router.get("/qa/feedback/list", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def list_qa_feedback(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    negative_only: bool = False,
+    user_id: Optional[str] = None,
+):
+    """Feedback received on answers, newest first, each with its question."""
+    params = {
+        "limit": limit,
+        "offset": offset,
+        "negative_only": negative_only,
+        "user_id": user_id,
+    }
+    result = await FOODSCHOLAR.list_qa_feedback(
+        {k: v for k, v in params.items() if v is not None}
+    )
+    RECORDER.record_event(
+        "expert.feedback_reviewed",
+        app="console",
+        props={"returned": len((result or {}).get("items") or [])},
+    )
+    return result
+
+
 @router.post("/qa/feedback", dependencies=[Depends(auth())])
 @render()
 async def submit_feedback(request: Request, body: QAFeedbackRequest):
-    return await FOODSCHOLAR.submit_qa_feedback(body.model_dump(exclude_none=True))
+    # Stamped here rather than accepted from the body, for the same reason
+    # `/qa/ask` does it: the token is the only trustworthy source of who is
+    # speaking, and feedback nobody can be attributed to cannot be reviewed.
+    # `QAFeedbackRequest` deliberately has no `user_id` field, so a client
+    # cannot claim to be someone else.
+    user = kutils.current_user(request)
+    payload = body.model_dump(exclude_none=True)
+    payload["user_id"] = user["sub"]
+    member_id = context.get_member_id()
+    if member_id:
+        payload["member_id"] = member_id
+    return await FOODSCHOLAR.submit_qa_feedback(payload)
 
 
 @router.post("/qa/memory", dependencies=[Depends(auth())])

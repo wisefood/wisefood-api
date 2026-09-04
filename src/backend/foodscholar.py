@@ -1,5 +1,9 @@
 import uuid
+from urllib.parse import quote
+
 import httpx
+
+import context
 from typing import Any, Dict, Optional
 from main import config
 from api.v1.households import HOUSEHOLD
@@ -39,45 +43,57 @@ class FoodScholar:
         return cls
 
     @classmethod
-    async def get(
-        cls, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs
-    ):
+    def _require_client(cls) -> httpx.AsyncClient:
         if cls._client is None:
             raise RuntimeError(
                 "FoodScholar client not initialized. Call get_client() first."
             )
-        response = await cls._client.get(endpoint, params=params, **kwargs)
+        return cls._client
+
+    @classmethod
+    def _headers(cls, supplied: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Headers for a downstream call: the correlation id, plus the caller's.
+
+        FoodScholar receives identity in the request body (`user_id`,
+        `member_id`), not in a header, so this carries only the correlation id —
+        enough for FoodScholar's log lines to join ours.
+        """
+        return {**context.outbound_headers(), **(supplied or {})}
+
+    @classmethod
+    async def _request(cls, method: str, endpoint: str, **kwargs) -> httpx.Response:
+        """The single place every non-streaming FoodScholar call goes through.
+
+        Previously each verb duplicated the client check and the raise; a header
+        added to four methods is a header missing from the fifth one somebody
+        adds later.
+        """
+        client = cls._require_client()
+        kwargs["headers"] = cls._headers(kwargs.pop("headers", None))
+        response = await client.request(method, endpoint, **kwargs)
         response.raise_for_status()
+        return response
+
+    @classmethod
+    async def get(
+        cls, endpoint: str, params: Optional[Dict[str, Any]] = None, **kwargs
+    ):
+        response = await cls._request("GET", endpoint, params=params, **kwargs)
         return response.json()
 
     @classmethod
     async def post(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "FoodScholar client not initialized. Call get_client() first."
-            )
-        response = await cls._client.post(endpoint, data=data, json=json, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("POST", endpoint, data=data, json=json, **kwargs)
         return response.json()
 
     @classmethod
     async def put(cls, endpoint: str, data: Any = None, json: Any = None, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "FoodScholar client not initialized. Call get_client() first."
-            )
-        response = await cls._client.put(endpoint, data=data, json=json, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("PUT", endpoint, data=data, json=json, **kwargs)
         return response.json()
 
     @classmethod
     async def delete(cls, endpoint: str, **kwargs):
-        if cls._client is None:
-            raise RuntimeError(
-                "FoodScholar client not initialized. Call get_client() first."
-            )
-        response = await cls._client.delete(endpoint, **kwargs)
-        response.raise_for_status()
+        response = await cls._request("DELETE", endpoint, **kwargs)
         return response.json() if response.text else {"status": "deleted"}
 
     @classmethod
@@ -178,17 +194,32 @@ class FoodScholar:
         comments every 15 s, which keeps the read timer fed even during long
         LLM calls.
         """
-        if cls._client is None:
-            raise RuntimeError(
-                "FoodScholar client not initialized. Call get_client() first."
-            )
+        client = cls._require_client()
         timeout = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
-        async with cls._client.stream(
-            "POST", "/api/v1/qa/ask/stream", json=payload, timeout=timeout
+        async with client.stream(
+            "POST",
+            "/api/v1/qa/ask/stream",
+            json=payload,
+            timeout=timeout,
+            headers=cls._headers()
         ) as response:
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
                 yield chunk
+
+    # ------------------------------------------------------------ review --
+    @classmethod
+    async def list_qa_requests(cls, params: dict):
+        """Questions that were asked. Gateway-side this is admin/expert only."""
+        return await cls.get("/api/v1/qa/requests", params=params)
+
+    @classmethod
+    async def get_qa_request(cls, request_id: str):
+        return await cls.get(f"/api/v1/qa/requests/{quote(str(request_id), safe='')}")
+
+    @classmethod
+    async def list_qa_feedback(cls, params: dict):
+        return await cls.get("/api/v1/qa/feedback/list", params=params)
 
     @classmethod
     async def submit_qa_feedback(cls, payload: dict):

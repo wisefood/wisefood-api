@@ -1,4 +1,5 @@
 import httpx
+import context
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
 from main import config
@@ -119,10 +120,12 @@ class RecipeWrangler:
                 "RecipeWrangler client not initialized. Call get_client() first."
             )
         # Forward who is asking. RecipeWrangler authenticates nobody; it
-        # trusts this service to have done so.
-        identity = cls.identity_headers(CURRENT_TOKEN_PAYLOAD.get())
-        if identity:
-            kwargs['headers'] = {**identity, **(kwargs.get('headers') or {})}
+        # trusts this service to have done so. The correlation id rides along
+        # so RecipeWrangler's log lines for this call carry the same id as ours.
+        forwarded = {**cls.identity_headers(CURRENT_TOKEN_PAYLOAD.get()),
+                     **context.outbound_headers()}
+        if forwarded:
+            kwargs['headers'] = {**forwarded, **(kwargs.get('headers') or {})}
 
         try:
             response = await cls._client.request(method, endpoint, **kwargs)

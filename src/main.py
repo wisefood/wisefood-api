@@ -6,8 +6,10 @@ from routers.generic import install_error_handler
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 import uvicorn
+import context
 import logsys
 import logging
+from middleware import RequestContextMiddleware
 
 
 logger = logging.getLogger(__name__)
@@ -121,6 +123,24 @@ class Config:
         self.settings["POSTGRES_MAX_OVERFLOW"] = int(
             os.getenv("POSTGRES_MAX_OVERFLOW", 20)
         )
+        # --- Observability / analytics -----------------------------------
+        # `text` (default) keeps the human-readable stdout this service has
+        # always produced; `json` emits one object per line and, unlike the text
+        # formatter, preserves the `extra={...}` fields the code already passes.
+        self.settings["LOG_FORMAT"] = os.getenv("LOG_FORMAT", "text").strip().lower()
+        # The platform-wide analytics switch. Off means: no activity events are
+        # recorded, the ingest endpoints accept and discard, and the console's
+        # usage pages report that collection is disabled. Nothing else changes —
+        # correlation ids and structured logs are not analytics and stay on.
+        self.settings["ANALYTICS_ENABLED"] = (
+            os.getenv("ANALYTICS_ENABLED", "false").lower() == "true"
+        )
+        # One INFO line per completed request, in addition to uvicorn's access
+        # log, carrying the route, status, duration and caller. Off by default:
+        # it doubles log volume, and it is only useful where logs are collected.
+        self.settings["REQUEST_LOG_ENABLED"] = (
+            os.getenv("REQUEST_LOG_ENABLED", "false").lower() == "true"
+        )
 
 
 # Configure application settings
@@ -156,6 +176,15 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("SELECT 1"))
     logger.info("Database connection OK")
 
+    # The activity recorder owns a background task and a bounded queue. Started
+    # here rather than at import so that a module import never spawns a task,
+    # and inert unless ANALYTICS_ENABLED — see src/analytics/.
+    from analytics import RECORDER, SETTINGS
+
+    RECORDER.start(enabled=config.settings["ANALYTICS_ENABLED"])
+    if config.settings["ANALYTICS_ENABLED"]:
+        await SETTINGS.refresh_if_stale()
+
     reaper_task = None
     if config.settings["GUEST_ENABLED"]:
         reaper_task = asyncio.create_task(_guest_reaper_loop())
@@ -171,6 +200,8 @@ async def lifespan(app: FastAPI):
     # --- SHUTDOWN ---
     if reaper_task:
         reaper_task.cancel()
+    # Drained before the DB pool closes, or the last events die with it.
+    await RECORDER.stop()
     logger.info("App shutdown: closing DB connections")
     from backend.postgres import PostgresConnectionSingleton
     await PostgresConnectionSingleton.close()
@@ -190,34 +221,28 @@ api.add_middleware(
     allow_credentials=True,           # set True if you send cookies / Authorization headers
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],              # or list specific headers
-    expose_headers=["Content-Length"],# optionally expose headers to browser
+    # X-Request-Id is exposed so the browser can read the correlation id off a
+    # response and report it with a bug — without this the header arrives but
+    # JavaScript cannot see it.
+    expose_headers=["Content-Length", context.REQUEST_ID_HEADER],
 )
 
-# Populate the RecipeWrangler proxy's identity context for each request.
+# Assign a correlation id, resolve who is asking, and populate the
+# RecipeWrangler proxy's identity context — once per request, for every route.
 #
-# RecipeWrangler does no authentication — it trusts this service to have
-# verified the token and to say who the caller is. Doing this as middleware
-# rather than per-route means a newly added proxied endpoint forwards identity
-# by default instead of by someone remembering to.
+# RecipeWrangler does no authentication: it trusts this service to have verified
+# the token and to say who the caller is. Doing this as middleware rather than
+# per-route means a newly added proxied endpoint forwards identity by default
+# instead of by someone remembering to.
 #
-# Decoding here is best-effort and never rejects: authorization remains the
-# `Depends(auth(...))` on each route. An absent or unreadable token simply
-# makes the downstream call anonymous, which RecipeWrangler handles by hiding
-# creator attribution and withdrawn recipes.
-@api.middleware("http")
-async def rw_identity_middleware(request, call_next):
-    from backend.recipewrangler import CURRENT_TOKEN_PAYLOAD
-    import kutils
-
-    try:
-        token = kutils.current_user(request)
-    except Exception:
-        token = None
-    reset = CURRENT_TOKEN_PAYLOAD.set(token)
-    try:
-        return await call_next(request)
-    finally:
-        CURRENT_TOKEN_PAYLOAD.reset(reset)
+# Resolution here is best-effort and never rejects: authorization remains the
+# `Depends(auth(...))` on each route. An absent or unreadable token simply makes
+# the downstream call anonymous, which RecipeWrangler handles by hiding creator
+# attribution and withdrawn recipes.
+#
+# Added last, so it sits outermost: every response, CORS preflights included,
+# carries the request id, and the id exists before any other layer can log.
+api.add_middleware(RequestContextMiddleware)
 
 
 # Initialize exception handlers
@@ -234,6 +259,7 @@ from routers.meal_plans import router as meal_plans_router
 from routers.images import router as images_router
 from routers.observability import router as observability_router
 from routers.users import router as users_router
+from routers.analytics import router as analytics_router
 
 api.include_router(households_router)
 api.include_router(household_members_router)
@@ -245,6 +271,7 @@ api.include_router(meal_plans_router)
 api.include_router(images_router)
 api.include_router(observability_router)
 api.include_router(users_router)
+api.include_router(analytics_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration
