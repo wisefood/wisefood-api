@@ -197,6 +197,10 @@ async def session_summary(
     by_type = {event_type: int(count) for event_type, count in counts_by_type}
     started_at, ended_at, distinct_users, errors, server_errors, slowest = span
 
+    from analytics.people import resolve_people
+
+    people = await resolve_people(user_id for user_id, _members, _count in who)
+
     return {
         "session_id": session_id,
         "started_at": started_at.isoformat() if started_at else None,
@@ -238,6 +242,11 @@ async def session_summary(
         # Zero when nobody in the session had consented; the counts above still
         # hold, because they never needed an identity.
         "identified_users": int(distinct_users or 0),
+        # Named, not just identified. A subject reaches this row only because
+        # the person consented to being named, and then showing them as a UUID
+        # withholds the one thing they agreed to. Resolved here, for this one
+        # session — deliberately not on the board of fifty, where a name per
+        # row is a Keycloak call per row and nobody reads rows that closely.
         "users": [
             {
                 "user_id": user_id,
@@ -246,6 +255,11 @@ async def session_summary(
                 "member_id": (members or [None])[0],
                 "member_ids": list(members or []),
                 "events": int(count),
+                **{
+                    k: v
+                    for k, v in people.get(user_id or "", {}).items()
+                    if k in ("display_name", "username", "household_name", "resolved")
+                },
             }
             for user_id, members, count in who
         ],
