@@ -3536,6 +3536,11 @@ async def click_map(
                     func.count(func.distinct(UIInteraction.client_session_id)),
                     func.count().filter(UIInteraction.kind == "rage"),
                     func.count().filter(UIInteraction.kind == "dead"),
+                    # What the control calls itself. Grouped on the key, not
+                    # the label, because a label can change with a translation
+                    # while the control stays the same thing — so the newest
+                    # one wins and the history stays in one row.
+                    func.max(UIInteraction.element_label),
                     # Where on the page this control sits, averaged over its
                     # clicks. The map is otherwise an abstract cloud with no
                     # reference points — which reads as broken rather than as
@@ -3578,12 +3583,30 @@ async def click_map(
             )
         ).one()
 
+        # Real addresses this pattern was seen at, most recent first. The map
+        # is drawn over a page, and `/recipes/[id]` cannot be opened — one of
+        # these can. Several are offered rather than one because the newest
+        # visit may have been to something since deleted.
+        examples = (
+            await db.execute(
+                select(
+                    UIInteraction.page_path,
+                    func.max(UIInteraction.occurred_at).label("seen"),
+                )
+                .where(*filters, UIInteraction.page_path.isnot(None))
+                .group_by(UIInteraction.page_path)
+                .order_by(func.max(UIInteraction.occurred_at).desc())
+                .limit(10)
+            )
+        ).all()
+
     scrolls = int(depth[4] or 0)
     peak = max((int(n or 0) for _c, _r, n, _g, _d in heat), default=0)
 
     return {
         **window,
         "path": path,
+        "example_paths": [row[0] for row in examples if row[0]],
         "grid": cells,
         "clicks": int(totals[0] or 0),
         "sessions": int(totals[1] or 0),
@@ -3611,6 +3634,7 @@ async def click_map(
         "elements": [
             {
                 "element_key": key,
+                "element_label": label or None,
                 "element_role": role,
                 "clicks": int(n or 0),
                 "sessions": int(s or 0),
@@ -3620,7 +3644,7 @@ async def click_map(
                 "x_pct": int(x) if x is not None else None,
                 "y_pct": int(y) if y is not None else None,
             }
-            for key, role, n, s, rage, dead, x, y in elements
+            for key, role, n, s, rage, dead, label, x, y in elements
         ],
         "scroll_depth": {
             "measured": scrolls,

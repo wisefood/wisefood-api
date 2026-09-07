@@ -1080,7 +1080,11 @@ class UIInteraction(Base):
     path = mapped_column(String(255), nullable=False)
     kind = mapped_column(String(16), nullable=False, default="click")
     element_key = mapped_column(String(160), nullable=True)
+    #: What the control calls itself — the accessible name, or its own words.
+    element_label = mapped_column(String(80), nullable=True)
     element_role = mapped_column(String(32), nullable=True)
+    #: The concrete address, where `path` holds the route pattern.
+    page_path = mapped_column(String(255), nullable=True)
     x_pct = mapped_column(Integer, nullable=True)
     y_pct = mapped_column(Integer, nullable=True)
     viewport_w = mapped_column(Integer, nullable=True)

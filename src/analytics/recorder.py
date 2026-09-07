@@ -362,6 +362,14 @@ def _prop_is_safe(key: str, value: Any) -> bool:
     return isinstance(value, str) and bool(_ROUTE_PATTERN.match(value))
 
 
+def _redact_label(value: Optional[str]) -> Optional[str]:
+    """A control's own words, with anything that looks personal taken out."""
+    if not value:
+        return None
+    cleaned = " ".join(_redact(str(value)).split())
+    return cleaned[:80] or None
+
+
 def _clamp_pct(value: Optional[int]) -> Optional[int]:
     """A coordinate in ten-thousandths of the page box, or nothing."""
     if value is None:
@@ -1081,7 +1089,9 @@ class ActivityRecorder:
         path: str,
         kind: str = "click",
         element_key: Optional[str] = None,
+        element_label: Optional[str] = None,
         element_role: Optional[str] = None,
+        page_path: Optional[str] = None,
         x_pct: Optional[int] = None,
         y_pct: Optional[int] = None,
         viewport_w: Optional[int] = None,
@@ -1119,7 +1129,14 @@ class ActivityRecorder:
                         "path": str(path)[:255],
                         "kind": str(kind)[:16],
                         "element_key": (element_key or None) and str(element_key)[:160],
+                        # Words a browser read off the page, so redacted like
+                        # any other captured text: a control's own label is
+                        # chrome, but nothing stops a page putting a name in
+                        # an aria-label, and this column is readable by
+                        # everyone with console access.
+                        "element_label": _redact_label(element_label),
                         "element_role": (element_role or None) and str(element_role)[:32],
+                        "page_path": (page_path or None) and str(page_path)[:255],
                         "x_pct": _clamp_pct(x_pct),
                         "y_pct": _clamp_pct(y_pct),
                         "viewport_w": viewport_w,

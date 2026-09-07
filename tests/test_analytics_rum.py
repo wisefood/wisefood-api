@@ -253,8 +253,20 @@ class TestSchemaParity:
 
     @staticmethod
     def _ddl_columns():
+        """Columns the hand-applied DDL creates, including later ALTERs.
+
+        A column added by a follow-up file is as real as one in the original
+        CREATE, and reading only the CREATE made this guard report drift for
+        a column that had in fact been added properly.
+        """
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        sql_text = open(os.path.join(here, "schemas", "51_analytics_rum.sql")).read()
+        schemas = os.path.join(here, "schemas")
+        sql_text = open(os.path.join(schemas, "51_analytics_rum.sql")).read()
+        later = "".join(
+            open(os.path.join(schemas, name)).read()
+            for name in sorted(os.listdir(schemas))
+            if name > "51_" and name.endswith(".sql")
+        )
         tables = {}
         for match in re.finditer(
             r"CREATE TABLE IF NOT EXISTS analytics\.(\w+)\s*\((.*?)\n\);", sql_text, re.S
@@ -271,6 +283,11 @@ class TestSchemaParity:
                 if col:
                     columns.add(col.group(1))
             tables[name] = columns
+        for table, column in re.findall(
+            r"ALTER TABLE analytics\.(\w+)\s+ADD COLUMN IF NOT EXISTS (\w+)",
+            later, re.I,
+        ):
+            tables.setdefault(table, set()).add(column)
         return tables
 
     def test_every_model_column_exists_in_the_ddl(self):

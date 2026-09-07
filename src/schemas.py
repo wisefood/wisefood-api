@@ -2021,7 +2021,13 @@ class InteractionIn(BaseModel):
     kind: Literal["click", "rage", "dead", "scroll"] = "click"
     occurred_at: Optional[datetime] = None
     element_key: Optional[str] = Field(default=None, max_length=160)
+    #: What the control calls itself. The key groups clicks; this is the half
+    #: a person can read and go and find on the page.
+    element_label: Optional[str] = Field(default=None, max_length=80)
     element_role: Optional[str] = Field(default=None, max_length=32)
+    #: One concrete address for the pattern above, so the console has a real
+    #: page to render behind the map. `/recipes/[id]` cannot be navigated to.
+    page_path: Optional[str] = Field(default=None, max_length=255)
     #: Ten-thousandths of the page box, so a phone and a desktop can be drawn
     #: on the same picture.
     x_pct: Optional[int] = Field(default=None, ge=0, le=10_000)
