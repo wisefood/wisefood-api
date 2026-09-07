@@ -3537,6 +3537,14 @@ async def click_map(
                     func.count(func.distinct(UIInteraction.client_session_id)),
                     func.count().filter(UIInteraction.kind == "rage"),
                     func.count().filter(UIInteraction.kind == "dead"),
+                    # Where on the page this control sits, averaged over its
+                    # clicks. The map is otherwise an abstract cloud with no
+                    # reference points — which reads as broken rather than as
+                    # a density plot. Labelling the hot regions with the thing
+                    # that was clicked is what a screenshot would have given,
+                    # from data already on the row.
+                    func.avg(UIInteraction.x_pct),
+                    func.avg(UIInteraction.y_pct),
                 )
                 .where(*filters, UIInteraction.element_key.isnot(None))
                 .group_by(UIInteraction.element_key, UIInteraction.element_role)
@@ -3609,8 +3617,11 @@ async def click_map(
                 "sessions": int(s or 0),
                 "rage": int(rage or 0),
                 "dead": int(dead or 0),
+                # Ten-thousandths of the page box, same scale as the cells.
+                "x_pct": int(x) if x is not None else None,
+                "y_pct": int(y) if y is not None else None,
             }
-            for key, role, n, s, rage, dead in elements
+            for key, role, n, s, rage, dead, x, y in elements
         ],
         "scroll_depth": {
             "measured": scrolls,
