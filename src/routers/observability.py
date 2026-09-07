@@ -118,8 +118,27 @@ async def prompts(request: Request):
 # "Could not load this prompt."
 @router.get("/prompts/{name:path}", dependencies=[Depends(auth("admin,expert"))])
 @render()
-async def prompt_detail(request: Request, name: str):
-    return {"prompt": await LANGFUSE_READ.fetch_prompt(name), "enabled": langfuse_read_enabled()}
+async def prompt_detail(
+    request: Request,
+    name: str,
+    label: Optional[str] = Query(None, max_length=64),
+    version: Optional[int] = Query(None, ge=1),
+):
+    """One prompt, with what a reader needs to understand its template.
+
+    ``template`` says which variables it expects, where messages get spliced
+    in, what other prompts it references, and whether it uses Langfuse's
+    ``{{var}}`` or FoodChat's ``{var}`` convention — the console cannot show
+    a fill-in preview without knowing that, and a person cannot tell by eye.
+    """
+    from backend.prompt_template import describe
+
+    prompt = await LANGFUSE_READ.fetch_prompt(name, label=label, version=version)
+    return {
+        "prompt": prompt,
+        "template": describe(prompt) if prompt else None,
+        "enabled": langfuse_read_enabled(),
+    }
 
 
 async def _none():

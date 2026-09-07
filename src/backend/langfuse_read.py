@@ -7,6 +7,7 @@ never raise into the request path (logged at WARNING).
 import json
 import logging
 import os
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -99,17 +100,65 @@ class LangfuseRead:
             return []
 
     @classmethod
-    async def fetch_prompt(cls, name: str) -> Optional[Dict[str, Any]]:
+    async def fetch_prompt(
+        cls,
+        name: str,
+        *,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """One prompt, by version, by label, or the best one available.
+
+        Two things about Langfuse's endpoint that this hides from callers:
+
+        * The name is a single path segment. Prompts here are namespaced
+          (``foodchat/batch_grader_user``) and a literal ``/`` in the URL is
+          a different route — every namespaced prompt 404d until the slash
+          was percent-encoded.
+        * With no ``label`` and no ``version`` it serves the ``production``
+          label, and a prompt that has no version carrying that label is a
+          404, not an empty answer. So when the caller did not ask for
+          anything in particular, ``production`` is tried first and then
+          ``latest`` — a prompt that exists is always readable.
+
+        A last resort turns off dependency resolution: a prompt whose
+        reference to another prompt cannot be resolved fails to load resolved
+        but is perfectly readable raw, tags and all — and the raw form is the
+        one a person debugging that reference needs anyway.
+        """
         client = cls._get_client()
         if client is None:
             return None
-        try:
-            resp = await client.get(f"/api/public/v2/prompts/{name}")
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Langfuse fetch_prompt(%s) failed: %s", name, exc)
-            return None
+        encoded = quote(name, safe="")
+        attempts: List[Dict[str, Any]] = []
+        if version is not None:
+            attempts.append({"version": int(version)})
+        elif label:
+            attempts.append({"label": label})
+        else:
+            attempts.append({"label": "production"})
+            attempts.append({"label": "latest"})
+        # Same attempts again, unresolved.
+        attempts.extend({**a, "resolve": "false"} for a in list(attempts))
+
+        for params in attempts:
+            try:
+                resp = await client.get(f"/api/public/v2/prompts/{encoded}", params=params)
+                if resp.status_code == 404:
+                    continue
+                resp.raise_for_status()
+                body = resp.json()
+                if not isinstance(body, dict):
+                    return None
+                body["_fetched_with"] = {
+                    "label": params.get("label"),
+                    "version": params.get("version"),
+                    "resolved": params.get("resolve") != "false",
+                }
+                return body
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Langfuse fetch_prompt(%s, %s) failed: %s", name, params, exc)
+        return None
 
     @classmethod
     async def push_score(
