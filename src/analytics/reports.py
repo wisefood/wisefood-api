@@ -847,7 +847,6 @@ async def trending_queries(*, days: int = 7, limit: int = 20, since: Optional[st
                 .group_by(SearchQuery.query_hash)
                 .order_by(func.count().desc())
                 .limit(size)
-                .offset(start)
             )
         ).all()
 
