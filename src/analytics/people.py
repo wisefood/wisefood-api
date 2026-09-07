@@ -164,3 +164,78 @@ async def resolve_people(user_ids: Iterable[Optional[str]]) -> Dict[str, Dict[st
 
 def _reset_cache_for_tests() -> None:
     _cache.clear()
+
+
+# ------------------------------------------------------------- rated things --
+#
+# The other half of putting a name to something. A complaints table listing
+# `960c01f9-9a7b-…` tells a curator which row to be worried about and nothing
+# about what it is — they cannot recognise the dish, and cannot tell two rows
+# apart without opening both.
+
+_title_cache: Dict[str, tuple] = {}
+_TITLE_TTL_SECONDS = 600.0
+
+
+async def resolve_titles(targets: Iterable[tuple]) -> Dict[str, str]:
+    """Titles for `(target_type, target_id)` pairs, batched per type.
+
+    Only recipes today: RecipeWrangler exposes a batch endpoint, so one page of
+    complaints costs one call. Articles and guides live in the catalog and have
+    no batch read yet — they keep their id rather than earning a request each,
+    which is the trade a table of fifty rows demands.
+
+    Never raises. A title that cannot be resolved is simply absent, and the
+    caller falls back to the id it already had.
+    """
+    wanted = {(str(t or ""), str(i or "")) for t, i in targets if i}
+    if not wanted:
+        return {}
+
+    now = time.monotonic()
+    out: Dict[str, str] = {}
+    missing: List[str] = []
+    for target_type, target_id in wanted:
+        if target_type != "recipe":
+            continue
+        hit = _title_cache.get(target_id)
+        if hit and (now - hit[0]) < _TITLE_TTL_SECONDS:
+            if hit[1]:
+                out[target_id] = hit[1]
+        else:
+            missing.append(target_id)
+
+    if not missing:
+        return out
+
+    try:
+        from backend.recipewrangler import RecipeWranglerBackend
+
+        payload = await RecipeWranglerBackend.recipe_details_batch(missing)
+        rows = payload if isinstance(payload, list) else (payload or {}).get("result") or []
+        if isinstance(rows, dict):
+            rows = rows.get("recipes") or []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            rid = str(row.get("id") or row.get("recipe_id") or "")
+            title = (row.get("title") or row.get("name") or "").strip()
+            if rid and title:
+                out[rid] = title
+                _title_cache[rid] = (now, title)
+    except Exception:
+        logger.debug("analytics.title_lookup_failed", exc_info=True)
+        return out
+
+    # Remember the misses too, so a deleted recipe is not looked up on every
+    # render of the table it still appears in.
+    for rid in missing:
+        _title_cache.setdefault(rid, (now, out.get(rid, "")))
+    if len(_title_cache) > _MAX_ENTRIES:
+        for stale in sorted(_title_cache, key=lambda k: _title_cache[k][0])[: len(_title_cache) - _MAX_ENTRIES]:
+            _title_cache.pop(stale, None)
+    return out
+
+
+def _reset_title_cache_for_tests() -> None:
+    _title_cache.clear()

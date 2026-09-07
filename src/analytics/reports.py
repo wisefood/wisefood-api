@@ -847,6 +847,7 @@ async def trending_queries(*, days: int = 7, limit: int = 20, since: Optional[st
                 .group_by(SearchQuery.query_hash)
                 .order_by(func.count().desc())
                 .limit(size)
+                .offset(start)
             )
         ).all()
 
@@ -1166,12 +1167,22 @@ async def feedback_by_target(*, days: int = 30, limit: int = 25, since: Optional
             )
         ).all()
 
+    from analytics.people import resolve_titles
+
+    titles = await resolve_titles(
+        (target_type, target_id) for target_type, target_id, *_rest in rows
+    )
+
     return {
         **window,
         "targets": [
             {
                 "target_type": target_type,
                 "target_id": target_id,
+                # The dish, not its uuid. A curator cannot recognise
+                # `960c01f9-9a7b-…`, and cannot tell two rows apart without
+                # opening both.
+                "title": titles.get(str(target_id) or ""),
                 "app": app,
                 "feedback": int(count),
                 "negative": int(bad or 0),
@@ -1227,14 +1238,30 @@ async def search_funnel(*, days: int = 7, since: Optional[str] = None, until: Op
 
 
 # ------------------------------------------------------------------- users --
-async def user_activity(*, days: int = 30, limit: int = 50, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
-    """Per-user activity and cost, for users whose consent allows naming them."""
+async def user_activity(
+    *,
+    days: int = 30,
+    limit: int = 50,
+    offset: int = 0,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Per-user activity and cost, for people whose consent allows naming them.
+
+    Named and paged. The list was a bare top-fifty of opaque subjects with no
+    way past it: an expert looking for one person could neither recognise them
+    nor reach page two.
+    """
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
     from sql import ActivityEvent, FeedbackRecord, LLMUsage, SearchQuery
 
     window = _window(days, since, until)
     since = window.since
     size = _clamp(limit, 50, 200)
+    start = max(0, int(offset or 0))
+    # How many people there are in total, so the table can say "50 of 214"
+    # and offer a next page rather than ending in a silent truncation.
+    total = 0
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
         rows = (
@@ -1263,6 +1290,13 @@ async def user_activity(*, days: int = 30, limit: int = 50, since: Optional[str]
                 .limit(size)
             )
         ).all()
+
+        total = await db.scalar(
+            select(func.count(func.distinct(ActivityEvent.user_id))).where(
+                ActivityEvent.occurred_at >= since,
+                ActivityEvent.user_id.isnot(None),
+            )
+        )
 
         # Searches come from search_query, not from the `recipe.search` event.
         # Only the browser emits that event, so counting it here meant the
@@ -1328,11 +1362,26 @@ async def user_activity(*, days: int = 30, limit: int = 50, since: Optional[str]
             ]
         )
 
+    from analytics.people import resolve_people
+
+    # One page's worth of names. Bounded by the page size and cached, so the
+    # cost is a handful of Keycloak calls per page rather than per row per
+    # render — and this table is the one place a name is the whole point.
+    people = await resolve_people(row[0] for row in rows)
+
     return {
         **window,
+        "total": int(total or 0),
+        "offset": start,
+        "limit": size,
         "users": [
             {
                 "user_id": user_id,
+                **{
+                    k: v
+                    for k, v in people.get(user_id or "", {}).items()
+                    if k in ("display_name", "username", "household_name", "resolved")
+                },
                 "events": int(events),
                 "sessions": int(sessions or 0),
                 "first_seen": first.isoformat() if first else None,

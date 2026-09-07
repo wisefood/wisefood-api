@@ -19,8 +19,12 @@ that makes it personal data is the part being dropped.
 from __future__ import annotations
 
 import ipaddress
+import logging
+import os
 import re
 from typing import Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 #: A user agent is attacker-controlled text that ends up in a database column
 #: and, eventually, on a page. Length-capped here rather than at the column.
@@ -140,12 +144,28 @@ def _major(match: "re.Match") -> Optional[str]:
     return ".".join(parts[:2])[:24]
 
 
-def truncate_ip(raw: Optional[str]) -> Optional[str]:
-    """The network an address is on, never the address.
+#: Whether the whole address is kept.
+#:
+#: Off by default, and this is the one setting here with a real consequence.
+#: An IP address identifies a household and is personal data under GDPR; a /24
+#: prefix is enough to spot one broken office network and not enough to name
+#: anybody. Turning it on is a deliberate choice by the platform's controller,
+#: and it belongs in the DPIA — it does not change what is *collected*, only
+#: how precisely it is kept.
+#:
+#: It also cannot be applied retroactively: rows written while this was off
+#: hold a prefix, and the rest of the address is gone.
+KEEP_FULL_IP = (os.getenv("ANALYTICS_KEEP_FULL_IP", "").strip().lower()
+                in ("1", "true", "yes"))
 
-    IPv4 keeps its first three octets and IPv6 its first three groups. Both are
-    returned in a form that reads as deliberately incomplete — `81.4.127.0/24`
-    — so nobody downstream mistakes the column for an address.
+
+def truncate_ip(raw: Optional[str]) -> Optional[str]:
+    """The address, or the network it is on, depending on ANALYTICS_KEEP_FULL_IP.
+
+    With the flag off — the default — IPv4 keeps its first three octets and
+    IPv6 its first three groups, returned in a form that reads as deliberately
+    incomplete (`81.4.127.0/24`) so nobody downstream mistakes it for an
+    address. With it on, the address is stored as given.
     """
     if not raw:
         return None
@@ -165,6 +185,8 @@ def truncate_ip(raw: Optional[str]) -> Optional[str]:
         return None
     if address.is_loopback or address.is_unspecified:
         return None
+    if KEEP_FULL_IP:
+        return str(address)
     try:
         if address.version == 4:
             return str(ipaddress.ip_network(f"{address}/24", strict=False))
@@ -195,6 +217,60 @@ def country_from_headers(headers) -> Optional[str]:
         if len(code) == 2 and code.isalpha() and code not in ("XX", "T1"):
             return code
     return None
+
+
+#: A local MaxMind GeoLite2 database, if one is mounted.
+#:
+#: Local on purpose. The obvious way to get a country is to call a free lookup
+#: API, and that sends every visitor's IP address to a third party — which is a
+#: transfer of personal data to another processor, needing a legal basis and a
+#: line in the DPIA, to learn a two-letter code. A GeoLite2 file answers the
+#: same question in-process, offline, for free.
+#:
+#: Falls back to nothing when the file is absent, so this is opt-in by mounting
+#: it and setting GEOIP_DB_PATH.
+GEOIP_DB_PATH = os.getenv("GEOIP_DB_PATH", "").strip()
+_geoip_reader = None
+_geoip_tried = False
+
+
+def country_from_ip(raw: Optional[str]) -> Optional[str]:
+    """A two-letter country for an address, from the local database.
+
+    Returns None when no database is mounted, when the library is not
+    installed, or when the address is not in it — all of which are ordinary,
+    and none of which is worth failing a request over. The ingress header is
+    always preferred; this is the fallback for a cluster whose ingress does not
+    set one.
+    """
+    global _geoip_reader, _geoip_tried
+
+    if not raw or not GEOIP_DB_PATH:
+        return None
+    if not _geoip_tried:
+        _geoip_tried = True
+        try:
+            import geoip2.database
+
+            _geoip_reader = geoip2.database.Reader(GEOIP_DB_PATH)
+        except Exception:
+            # Not installed, or the file is not where the variable says.
+            logger.info("analytics.geoip_unavailable path=%s", GEOIP_DB_PATH)
+            _geoip_reader = None
+    if _geoip_reader is None:
+        return None
+
+    candidate = str(raw).split(",")[0].strip()
+    if candidate.startswith("["):
+        candidate = candidate[1:].split("]", 1)[0]
+    elif candidate.count(":") == 1:
+        candidate = candidate.split(":", 1)[0]
+    try:
+        code = _geoip_reader.country(candidate).country.iso_code
+        return code.upper() if code else None
+    except Exception:
+        # A private address, or one the database does not cover.
+        return None
 
 
 def client_ip(scope, headers) -> Optional[str]:

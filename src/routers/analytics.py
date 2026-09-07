@@ -219,13 +219,18 @@ async def ingest_client_session(request: Request, body: ClientSessionIn):
     if not RECORDER.enabled:
         return {"accepted": False, "collecting": False}
 
-    from analytics.device import client_ip, country_from_headers
+    from analytics.device import client_ip, country_from_headers, country_from_ip
 
     RECORDER.record_client_session(
         session_id=body.session_id,
         user_agent=request.headers.get("user-agent"),
         ip=client_ip(request.scope, request.headers),
-        country=country_from_headers(request.headers),
+        # The ingress's answer first — it saw the connection. The local
+        # database only for clusters whose ingress stamps nothing.
+        country=(
+            country_from_headers(request.headers)
+            or country_from_ip(client_ip(request.scope, request.headers))
+        ),
         app=body.app,
         release=body.release,
         screen_w=body.screen_w,
