@@ -68,6 +68,15 @@ class TestTheGate:
             NOBODY, scope("/api/v1/analytics/settings/platform.maintenance_mode")
         )
 
+    def test_services_can_still_read_flags_and_report(self, closed):
+        # Neither is user access. Refusing runtime-flags makes every service
+        # fall back to defaults for the length of the maintenance; refusing
+        # the signed internal ingest silently loses what they did.
+        assert not RequestContextMiddleware._closed_to(
+            NOBODY, scope("/api/v1/analytics/runtime-flags"))
+        assert not RequestContextMiddleware._closed_to(
+            NOBODY, scope("/api/v1/analytics/internal/events"))
+
     def test_the_exemptions_are_the_narrow_ones(self, closed):
         # Every other analytics endpoint is closed like anything else — the
         # exemption is for the switch, not for the console.

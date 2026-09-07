@@ -44,6 +44,14 @@ _MAINTENANCE_OPEN = (
     "/api/v1/system/ping",
     "/api/v1/system/info",
     "/api/v1/analytics/settings",
+    # Service-to-service, and neither is user access. `runtime-flags` is how
+    # every service reads the tracing kill switch — refusing it makes them all
+    # fall back to defaults for the length of the maintenance — and the signed
+    # internal ingest is how they report what they did, which is simply lost
+    # if it is turned away. Closing the platform to people is the point;
+    # blinding the platform to itself is not.
+    "/api/v1/analytics/runtime-flags",
+    "/api/v1/analytics/internal/",
     "/docs",
     "/openapi.json",
 )
@@ -116,23 +124,36 @@ class RequestContextMiddleware:
         # Maintenance: admins through, everyone else told plainly. Read from
         # the settings cache, never the database — this runs on every request.
         if self._closed_to(payload, scope):
-            context.reset(tokens)
-            await _send_json(
-                send,
-                503,
-                {
-                    "success": False,
-                    "error": {
-                        "code": "platform/maintenance",
-                        "title": "Maintenance",
-                        "detail": (
-                            "WiseFood is briefly closed for maintenance. "
-                            "Please try again shortly."
-                        ),
+            # The context is reset *after* the response, not before: it carries
+            # the subject and roles, and resetting first logged every refusal
+            # as anonymous. "Who is being turned away" is the only question
+            # worth asking of a maintenance log, and it had no answer.
+            try:
+                await _send_json(
+                    send,
+                    503,
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "platform/maintenance",
+                            "title": "Maintenance",
+                            "detail": (
+                                "WiseFood is briefly closed for maintenance. "
+                                "Please try again shortly."
+                            ),
+                        },
                     },
-                },
-                extra_headers={"Retry-After": "300", context.REQUEST_ID_HEADER: request_id},
-            )
+                    extra_headers={
+                        "Retry-After": "300",
+                        context.REQUEST_ID_HEADER: request_id,
+                    },
+                )
+                logger.info(
+                    "platform.maintenance_refused",
+                    extra={"path": scope.get("path"), "sub": self._sub(payload)},
+                )
+            finally:
+                context.reset(tokens)
             return
 
         # RecipeWrangler authenticates nobody; it trusts this service to say who
