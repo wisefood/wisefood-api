@@ -20,6 +20,35 @@ origins = [
 ]
 
 # Configuration context
+def _env_port(name: str, default: int) -> int:
+    """A port from the environment, tolerating Kubernetes' service links.
+
+    Kubernetes injects Docker-link-style variables for every service in the
+    namespace, so a service called `redis` sets `REDIS_PORT` to
+    `tcp://10.105.85.77:6379` — and `int()` on that raises at import time,
+    before anything has a chance to log why. The API deployment happens to set
+    `REDIS_PORT` explicitly and so never saw it; the retention CronJob does not,
+    and died on every run for two days with a traceback that named the wrong
+    thing.
+
+    The port is the last colon-separated field either way, so take that. A
+    value that is neither a number nor a URL falls back to the default rather
+    than taking the process down: a bad port is a degraded cache, and a cache
+    is not worth refusing to start over.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    candidate = raw.rsplit(":", 1)[-1]
+    try:
+        return int(candidate)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "%s=%r is not a port; using %d", name, raw, default
+        )
+        return default
+
+
 class Config:
     def __init__(self):
         self.settings = {}
@@ -27,7 +56,7 @@ class Config:
     def setup(self):
         # Read environment variables and store them in the settings dictionary
         self.settings["HOST"] = os.getenv("HOST", "127.0.0.1")
-        self.settings["PORT"] = int(os.getenv("PORT", 8000))
+        self.settings["PORT"] = _env_port("PORT", 8000)
         self.settings["DEBUG"] = os.getenv("DEBUG", "true").lower() == "true"
         self.settings["CONTEXT_PATH"] = os.getenv("CONTEXT_PATH", "")
         self.settings["APP_EXT_DOMAIN"] = os.getenv("APP_EXT_DOMAIN", "http://wisefood.gr")
@@ -101,7 +130,7 @@ class Config:
             os.getenv("CACHE_ENABLED", "false").lower() == "true"
         )
         self.settings["REDIS_HOST"] = os.getenv("REDIS_HOST", "redis")
-        self.settings["REDIS_PORT"] = int(os.getenv("REDIS_PORT", 6379))
+        self.settings["REDIS_PORT"] = _env_port("REDIS_PORT", 6379)
         self.settings["IMAGE_CACHE_REDIS_DB"] = int(
             os.getenv("IMAGE_CACHE_REDIS_DB", 3)
         )
@@ -115,7 +144,7 @@ class Config:
             os.getenv("IMAGE_CACHE_TTL_SECONDS", 7 * 24 * 3600)
         )
         self.settings["POSTGRES_HOST"] = os.getenv("POSTGRES_HOST", "localhost")
-        self.settings["POSTGRES_PORT"] = int(os.getenv("POSTGRES_PORT", 5432))
+        self.settings["POSTGRES_PORT"] = _env_port("POSTGRES_PORT", 5432)
         self.settings["POSTGRES_USER"] = os.getenv("POSTGRES_USER", "postgres")
         self.settings["POSTGRES_PASSWORD"] = os.getenv("POSTGRES_PASSWORD", "postgres")
         self.settings["POSTGRES_DB"] = os.getenv("POSTGRES_DB", "wisefood")
