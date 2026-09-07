@@ -102,6 +102,14 @@ DEFAULTS: Dict[str, Any] = {
     # or price a newly added model from the console instead of waiting for a
     # release. Empty by default: the built-in table applies until overridden.
     "pricing.overrides": {},
+    # --- Platform ----------------------------------------------------------
+    # Only admins may use the platform while this is on; everyone else gets a
+    # maintenance page and a 503 from the API. Lives in this table rather than
+    # in a second one because this table already has what a platform switch
+    # needs — an admin-only write, validation, an audit trail of who flipped it
+    # and when, and thirty-second propagation to every replica — and building
+    # those again for one boolean would be the wrong kind of tidy.
+    "platform.maintenance_mode": False,
 }
 
 #: Settings whose value is an open-ended map rather than a fixed set of

@@ -181,6 +181,9 @@ class TestSettingsSurface:
             "tracing.enabled",
             "tracing.langfuse",
             "pricing.overrides",
+            # Platform-wide, not analytics — it rides on this table for the
+            # admin-only write and the replica propagation it already has.
+            "platform.maintenance_mode",
         }
         assert set(DEFAULTS) == expected
 

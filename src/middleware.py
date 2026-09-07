@@ -36,8 +36,40 @@ logger = logging.getLogger(__name__)
 #: everything else. Matched against the ROUTE TEMPLATE, never the URL — the
 #: service runs behind a `/rest` root path and `request.url.path` carries it.
 _UNRECORDED_ROUTES = ("/api/v1/analytics/", "/api/v1/system/ping")
+#: Paths that stay open during maintenance, matched against the URL path with
+#: any root path stripped. The status endpoints so the browser can learn the
+#: platform is closed; the settings endpoints so an admin can open it again —
+#: a maintenance mode nobody can switch off is an outage with a nicer page.
+_MAINTENANCE_OPEN = (
+    "/api/v1/system/ping",
+    "/api/v1/system/info",
+    "/api/v1/analytics/settings",
+    "/docs",
+    "/openapi.json",
+)
 #: How long a FAILED introspection is remembered. See `_token_payload`.
 _FAILURE_TTL = 3.0
+
+
+async def _send_json(send, status: int, body: dict, extra_headers=None) -> None:
+    """One JSON response, straight from the middleware.
+
+    Pure ASGI has no Response object to lean on; this is the whole of what one
+    does. Kept minimal on purpose — it is the only thing this middleware ever
+    sends itself, and it must not be able to fail.
+    """
+    import json
+
+    payload = json.dumps(body).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(payload)).encode("ascii")),
+        (b"cache-control", b"no-store"),
+    ]
+    for name, value in (extra_headers or {}).items():
+        headers.append((name.lower().encode("ascii"), str(value).encode("ascii")))
+    await send({"type": "http.response.start", "status": status, "headers": headers})
+    await send({"type": "http.response.body", "body": payload})
 
 
 class RequestContextMiddleware:
@@ -80,6 +112,28 @@ class RequestContextMiddleware:
         )
         # `request.state.request_id` is what routers/generic.py reads.
         scope.setdefault("state", {})["request_id"] = request_id
+
+        # Maintenance: admins through, everyone else told plainly. Read from
+        # the settings cache, never the database — this runs on every request.
+        if self._closed_to(payload, scope):
+            context.reset(tokens)
+            await _send_json(
+                send,
+                503,
+                {
+                    "success": False,
+                    "error": {
+                        "code": "platform/maintenance",
+                        "title": "Maintenance",
+                        "detail": (
+                            "WiseFood is briefly closed for maintenance. "
+                            "Please try again shortly."
+                        ),
+                    },
+                },
+                extra_headers={"Retry-After": "300", context.REQUEST_ID_HEADER: request_id},
+            )
+            return
 
         # RecipeWrangler authenticates nobody; it trusts this service to say who
         # is calling. Populated here so a newly added proxy route forwards
@@ -135,6 +189,33 @@ class RequestContextMiddleware:
         finally:
             CURRENT_TOKEN_PAYLOAD.reset(rw_token)
             context.reset(tokens)
+
+    # ----------------------------------------------------------- maintenance --
+    @classmethod
+    def _closed_to(cls, payload, scope) -> bool:
+        """Whether this request is refused because the platform is closed.
+
+        Admins are never refused — they are the ones doing the maintenance.
+        The check reads the in-process settings cache, so a flip reaches every
+        replica within the cache TTL and costs no request a database round trip.
+        """
+        try:
+            from analytics import SETTINGS
+
+            if not SETTINGS.current().get("platform.maintenance_mode", False):
+                return False
+        except Exception:
+            # If the switch cannot be read, the platform is open. A broken
+            # settings cache must not be able to lock everyone out.
+            return False
+        path = scope.get("path") or ""
+        root = scope.get("root_path") or ""
+        if root and path.startswith(root):
+            path = path[len(root):] or "/"
+        if any(path.startswith(prefix) for prefix in _MAINTENANCE_OPEN):
+            return False
+        roles = cls._roles(payload) or []
+        return "admin" not in roles
 
     # ------------------------------------------------------------- recording --
     @staticmethod

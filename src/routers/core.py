@@ -17,15 +17,25 @@ def ping(request: Request):
 
 @router.get("/info")
 @render()
-def info(request: Request):
+async def info(request: Request):
+    """Public facts about this deployment.
+
+    Unauthenticated on purpose, and that is what makes it the right place for
+    the maintenance flag: the browser has to learn the platform is closed
+    *before* anyone signs in, or a non-admin sees the login page, signs in,
+    and is then turned away — which is worse than being told at the door.
+    """
+    from analytics import SETTINGS
     from main import config
 
+    values = await SETTINGS.refresh_if_stale()
     return {
         "service": "WiseFood Core API",
         "version": "0.0.1",
         "docs": "/docs",
         "keycloak": config.settings["KEYCLOAK_EXT_URL"],
         "minio": config.settings["MINIO_EXT_URL_CONSOLE"],
+        "maintenance": bool(values.get("platform.maintenance_mode", False)),
     }
 
 
