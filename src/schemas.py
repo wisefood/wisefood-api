@@ -1992,6 +1992,15 @@ class ClientErrorIn(BaseModel):
         return value
 
 
+class FeedbackCountsRequest(BaseModel):
+    """Which things a curation list wants complaint badges for."""
+
+    target_type: Literal["recipe", "article", "guide", "textbook", "qa_answer"] = "recipe"
+    #: One page's worth. Capped so a caller cannot ask about the whole
+    #: catalogue in one statement.
+    target_ids: List[str] = Field(min_length=1, max_length=200)
+
+
 class ErrorStatusUpdate(BaseModel):
     """Where an error group sits in triage."""
 

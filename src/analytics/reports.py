@@ -892,13 +892,14 @@ async def trending_queries(*, days: int = 7, limit: int = 20, since: Optional[st
     return {**window, "top": top, "rising": rising}
 
 
-async def zero_result_queries(*, days: int = 7, limit: int = 20, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
+async def zero_result_queries(*, days: int = 7, limit: int = 20,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
     """Searches that found nothing — the catalogue's to-do list."""
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
     from sql import SearchQuery
 
     window = _window(days, since, until)
-    size = _clamp(limit, 20, 100)
+    size, start = _page(limit, offset, 20, 100)
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
         rows = (
@@ -918,11 +919,22 @@ async def zero_result_queries(*, days: int = 7, limit: int = 20, since: Optional
                 .group_by(SearchQuery.query_hash)
                 .order_by(func.count().desc())
                 .limit(size)
+                .offset(start)
             )
         ).all()
 
+        total = await db.scalar(
+            select(func.count(func.distinct(SearchQuery.query_hash))).where(
+                SearchQuery.occurred_at.between(window.since, window.until),
+                SearchQuery.zero_result.is_(True),
+            )
+        )
+
     return {
         **window,
+        "total": int(total or 0),
+        "offset": start,
+        "limit": size,
         "queries": [
             {
                 "query": query,
@@ -937,7 +949,8 @@ async def zero_result_queries(*, days: int = 7, limit: int = 20, since: Optional
 
 
 # ------------------------------------------------------------- performance --
-async def route_performance(*, days: int = 7, limit: int = 25, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
+async def route_performance(*, days: int = 7, limit: int = 25,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
     """Latency and error rate per route.
 
     `status` and `duration_ms` have been recorded on every request since the
@@ -953,7 +966,7 @@ async def route_performance(*, days: int = 7, limit: int = 25, since: Optional[s
     from sql import ActivityEvent
 
     window = _window(days, since, until)
-    size = _clamp(limit, 25, 100)
+    size, start = _page(limit, offset, 25, 100)
     requests_only = [
         ActivityEvent.occurred_at >= window.since,
         ActivityEvent.event_type == "http.request",
@@ -985,6 +998,7 @@ async def route_performance(*, days: int = 7, limit: int = 25, since: Optional[s
                 .group_by(ActivityEvent.route, ActivityEvent.app, ActivityEvent.method)
                 .order_by(func.count().desc())
                 .limit(size)
+                .offset(start)
             )
         ).all()
 
@@ -1128,7 +1142,8 @@ async def search_quality(*, days: int = 7, since: Optional[str] = None, until: O
     }
 
 
-async def feedback_by_target(*, days: int = 30, limit: int = 25, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
+async def feedback_by_target(*, days: int = 30, limit: int = 25,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
     """Which specific things draw complaints.
 
     Aggregate rates say the product is or is not liked. This says *what* is
@@ -1139,6 +1154,7 @@ async def feedback_by_target(*, days: int = 30, limit: int = 25, since: Optional
     from sql import FeedbackRecord
 
     window = _window(days, since, until)
+    size, start = _page(limit, offset, 25, 100)
     negative = FeedbackRecord.rating_value.in_(_NEGATIVE_VALUES)
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
@@ -1163,9 +1179,23 @@ async def feedback_by_target(*, days: int = 30, limit: int = 25, since: Optional
                 )
                 .having(func.count().filter(negative) > 0)
                 .order_by(func.count().filter(negative).desc())
-                .limit(_clamp(limit, 25, 100))
+                .limit(size)
+                .offset(start)
             )
         ).all()
+
+        total = await db.scalar(
+            select(
+                func.count(
+                    func.distinct(
+                        func.concat(FeedbackRecord.target_type, FeedbackRecord.target_id)
+                    )
+                )
+            ).where(
+                FeedbackRecord.occurred_at.between(window.since, window.until),
+                FeedbackRecord.target_id.isnot(None),
+            )
+        )
 
     from analytics.people import resolve_titles
 
@@ -1175,6 +1205,9 @@ async def feedback_by_target(*, days: int = 30, limit: int = 25, since: Optional
 
     return {
         **window,
+        "total": int(total or 0),
+        "offset": start,
+        "limit": size,
         "targets": [
             {
                 "target_type": target_type,
@@ -1802,7 +1835,8 @@ async def list_reviews(
 
 
 # --------------------------------------------------------- expert activity --
-async def expert_activity(*, days: int = 30, limit: int = 100, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
+async def expert_activity(*, days: int = 30, limit: int = 100,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
     """Who did what with their privileges.
 
     The record the platform never kept: every privileged proxy authorised and
@@ -1812,7 +1846,7 @@ async def expert_activity(*, days: int = 30, limit: int = 100, since: Optional[s
     from sql import ActivityEvent
 
     window = _window(days, since, until)
-    size = _clamp(limit, 100, 500)
+    size, start = _page(limit, offset, 100, 500)
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
         by_actor = (
@@ -1844,6 +1878,7 @@ async def expert_activity(*, days: int = 30, limit: int = 100, since: Optional[s
                     )
                     .order_by(ActivityEvent.occurred_at.desc())
                     .limit(size)
+                .offset(start)
                 )
             )
             .scalars()
@@ -2072,6 +2107,20 @@ def _prices_as_of() -> str:
     from analytics.pricing import PRICES_AS_OF
 
     return PRICES_AS_OF
+
+
+def _page(limit: Optional[int], offset: Optional[int], default: int, maximum: int):
+    """One page's bounds, and the fields a caller needs to render a pager.
+
+    Every list report capped itself with a LIMIT and said nothing about it, so
+    a table showing twenty-five rows and a table showing all twenty-five rows
+    looked identical — and there was no way to reach row twenty-six. This gives
+    each of them the same three fields, so the console can page them the same
+    way rather than each page inventing its own.
+    """
+    size = _clamp(limit, default, maximum)
+    start = max(0, int(offset or 0))
+    return size, start
 
 
 def _ratio(part: int, whole: int) -> float:
@@ -3574,7 +3623,8 @@ async def click_map(
 
 
 async def interaction_overview(
-    *, days: int = 30, limit: int = 25, since: Optional[str] = None, until: Optional[str] = None
+    *, days: int = 30, limit: int = 25,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None
 ) -> Dict[str, Any]:
     """Which pages people click on, and which ones frustrate them.
 
@@ -3586,7 +3636,7 @@ async def interaction_overview(
     from sql import UIInteraction
 
     window = _window(days, since, until)
-    size = _clamp(limit, 25, 100)
+    size, start = _page(limit, offset, 25, 100)
     in_window = UIInteraction.occurred_at.between(window.since, window.until)
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
@@ -3604,6 +3654,7 @@ async def interaction_overview(
                 .group_by(UIInteraction.path)
                 .order_by(func.coalesce(func.sum(UIInteraction.repeats), 0).desc())
                 .limit(size)
+                .offset(start)
             )
         ).all()
 
@@ -3800,3 +3851,45 @@ async def feedback_context(feedback_id: int) -> Optional[Dict[str, Any]]:
 
     context["available"] = True
     return context
+
+
+async def complaint_counts(target_type: str, target_ids: List[str]) -> Dict[str, Dict[str, int]]:
+    """Open and total complaints for a set of things, in one statement.
+
+    So a curation list can carry a badge. Until this, a report could only be
+    found by opening the recipe you already suspected — which is the wrong way
+    round: the list is where you go to find out *which* one to suspect.
+
+    Keyed by target id; ids with nothing against them are simply absent, so a
+    caller renders a badge only where there is something to say.
+    """
+    wanted = [str(t) for t in target_ids if t]
+    if not wanted:
+        return {}
+    from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
+    from sql import FeedbackRecord
+
+    try:
+        async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            rows = (
+                await db.execute(
+                    select(
+                        FeedbackRecord.target_id,
+                        func.count(),
+                        func.count().filter(FeedbackRecord.status != "resolved"),
+                    )
+                    .where(
+                        FeedbackRecord.target_type == target_type,
+                        FeedbackRecord.target_id.in_(wanted),
+                    )
+                    .group_by(FeedbackRecord.target_id)
+                )
+            ).all()
+    except Exception:
+        # A badge is not worth failing the list it sits on.
+        logger.debug("analytics.complaint_counts_failed", exc_info=True)
+        return {}
+    return {
+        str(target_id): {"total": int(total), "open": int(open_count or 0)}
+        for target_id, total, open_count in rows
+    }

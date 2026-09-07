@@ -43,6 +43,7 @@ from exceptions import (
 from routers.generic import render
 from schemas import (
     ClientErrorBatch,
+    FeedbackCountsRequest,
     ErrorStatusUpdate,
     ClientSessionIn,
     InteractionBatch,
@@ -563,20 +564,22 @@ async def trending(request: Request, days: int = 7, limit: int = 20, since: Opti
 
 @router.get("/queries/zero-result", dependencies=[Depends(auth("admin,expert"))])
 @render()
-async def zero_result(request: Request, days: int = 7, limit: int = 20, since: Optional[str] = None, until: Optional[str] = None):
+async def zero_result(request: Request, days: int = 7, limit: int = 20,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None):
     """Searches that found nothing — what the catalogue is missing."""
     from analytics.reports import zero_result_queries
 
-    return await zero_result_queries(days=days, limit=limit, since=since, until=until)
+    return await zero_result_queries(days=days, limit=limit, offset=offset, since=since, until=until)
 
 
 @router.get("/performance", dependencies=[Depends(auth("admin,expert"))])
 @render()
-async def performance(request: Request, days: int = 7, limit: int = 25, since: Optional[str] = None, until: Optional[str] = None):
+async def performance(request: Request, days: int = 7, limit: int = 25,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None):
     """Latency percentiles and error rate per route."""
     from analytics.reports import route_performance
 
-    return await route_performance(days=days, limit=limit, since=since, until=until)
+    return await route_performance(days=days, limit=limit, offset=offset, since=since, until=until)
 
 
 @router.get("/search-quality", dependencies=[Depends(auth("admin,expert"))])
@@ -600,11 +603,12 @@ async def funnel(request: Request, days: int = 7, since: Optional[str] = None, u
 
 @router.get("/feedback/targets", dependencies=[Depends(auth("admin,expert"))])
 @render()
-async def feedback_targets(request: Request, days: int = 30, limit: int = 25, since: Optional[str] = None, until: Optional[str] = None):
+async def feedback_targets(request: Request, days: int = 30, limit: int = 25,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None):
     """Which specific recipes, articles and answers draw complaints."""
     from analytics.reports import feedback_by_target
 
-    return await feedback_by_target(days=days, limit=limit, since=since, until=until)
+    return await feedback_by_target(days=days, limit=limit, offset=offset, since=since, until=until)
 
 
 #: Reports a researcher can take away as a file, and the key holding the rows.
@@ -832,11 +836,12 @@ async def llm_usage(request: Request, days: int = 30, since: Optional[str] = Non
 
 @router.get("/expert-activity", dependencies=[Depends(auth("admin,expert"))])
 @render()
-async def expert_activity_report(request: Request, days: int = 30, limit: int = 100, since: Optional[str] = None, until: Optional[str] = None):
+async def expert_activity_report(request: Request, days: int = 30, limit: int = 100,
+    offset: int = 0, since: Optional[str] = None, until: Optional[str] = None):
     """Who used their privileges, and on what."""
     from analytics.reports import expert_activity
 
-    return await expert_activity(days=days, limit=limit, since=since, until=until)
+    return await expert_activity(days=days, limit=limit, offset=offset, since=since, until=until)
 
 
 # -------------------------------------------------------- feedback review ----
@@ -1126,13 +1131,14 @@ async def interaction_pages(
     request: Request,
     days: int = 30,
     limit: int = 25,
+    offset: int = 0,
     since: Optional[str] = None,
     until: Optional[str] = None,
 ):
     """Which pages get clicked, and which ones frustrate people."""
     from analytics.reports import interaction_overview
 
-    return await interaction_overview(days=days, limit=limit, since=since, until=until)
+    return await interaction_overview(days=days, limit=limit, offset=offset, since=since, until=until)
 
 
 @router.get("/heatmap", dependencies=[Depends(auth("admin,expert"))])
@@ -1199,6 +1205,21 @@ async def feedback_in_context(request: Request, feedback_id: int):
         props={"feedback_id": feedback_id, "target_type": result.get("kind")},
     )
     return result
+
+
+@router.post("/feedback/counts", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def feedback_counts(request: Request, body: FeedbackCountsRequest):
+    """How many complaints stand against each of these things.
+
+    A POST because a curation page asks about a page of ids at once and a
+    query string is the wrong place for fifty of them. Read-only despite the
+    verb, and not recorded as expert activity: this is a badge on a list, not
+    somebody opening a person's record.
+    """
+    from analytics.reports import complaint_counts
+
+    return {"counts": await complaint_counts(body.target_type, body.target_ids)}
 
 
 @router.get("/health", dependencies=[Depends(auth("admin,expert"))])

@@ -709,3 +709,84 @@ class _AlwaysOn:
 
     def get(self, key, default=None):
         return default
+
+
+class TestListsSayHowMuchTheyAreHiding:
+    """Every list report capped itself with a LIMIT and said nothing about it,
+    so a table showing twenty-five rows and a table showing all twenty-five
+    looked identical — and row twenty-six was unreachable."""
+
+    @pytest.mark.parametrize("name", [
+        "zero_result_queries",
+        "route_performance",
+        "feedback_by_target",
+        "expert_activity",
+        "interaction_overview",
+        "user_activity",
+    ])
+    def test_the_list_reports_take_an_offset(self, name):
+        import inspect
+
+        from analytics import reports
+
+        assert "offset" in inspect.signature(getattr(reports, name)).parameters, name
+
+    @pytest.mark.parametrize("name", [
+        "zero_result_queries", "feedback_by_target", "user_activity",
+    ])
+    def test_they_return_what_a_pager_needs(self, name):
+        import inspect
+
+        from analytics import reports
+
+        source = inspect.getsource(getattr(reports, name))
+        for field in ('"total"', '"offset"', '"limit"'):
+            assert field in source, f"{name} is missing {field}"
+
+    def test_the_page_helper_clamps_both_ends(self):
+        from analytics.reports import _page
+
+        assert _page(None, None, 25, 100) == (25, 0)
+        assert _page(10_000, None, 25, 100)[0] == 100
+        assert _page(25, -5, 25, 100)[1] == 0
+
+    def test_a_summary_is_not_paged(self):
+        """A distribution has no page two. Paging one would imply an order it
+        does not have."""
+        import inspect
+
+        from analytics import reports
+
+        for name in ("audience_breakdown", "feedback_quality", "engagement_patterns"):
+            assert "offset" not in inspect.signature(getattr(reports, name)).parameters, name
+
+
+class TestComplaintBadges:
+    """A report could only be found by opening the recipe you already
+    suspected, which is the wrong way round: the list is where you go to find
+    out which one to suspect."""
+
+    def test_it_asks_about_a_page_not_the_catalogue(self):
+        import typing
+
+        from schemas import FeedbackCountsRequest
+
+        field = FeedbackCountsRequest.model_fields["target_ids"]
+        caps = [m for m in field.metadata if hasattr(m, "max_length")]
+        assert caps and caps[0].max_length <= 200
+
+    def test_only_known_target_types(self):
+        import typing
+
+        from schemas import FeedbackCountsRequest
+
+        allowed = typing.get_args(FeedbackCountsRequest.model_fields["target_type"].annotation)
+        assert "recipe" in allowed and "platform" not in allowed
+
+    def test_a_badge_never_fails_the_list_it_sits_on(self):
+        import inspect
+
+        from analytics.reports import complaint_counts
+
+        source = inspect.getsource(complaint_counts)
+        assert "except Exception" in source and "return {}" in source
