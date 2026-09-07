@@ -52,6 +52,11 @@ _MAINTENANCE_OPEN = (
     # blinding the platform to itself is not.
     "/api/v1/analytics/runtime-flags",
     "/api/v1/analytics/internal/",
+    # The browser's half of the same thing. Refusing it does not stop
+    # recording, it stops the page ever learning that recording is *on* — so
+    # capture silently disables itself and the console shows empty reports
+    # for the whole maintenance, which reads as the feature being broken.
+    "/api/v1/analytics/client-flags",
     "/docs",
     "/openapi.json",
 )

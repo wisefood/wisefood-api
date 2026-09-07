@@ -76,6 +76,11 @@ class TestTheGate:
             NOBODY, scope("/api/v1/analytics/runtime-flags"))
         assert not RequestContextMiddleware._closed_to(
             NOBODY, scope("/api/v1/analytics/internal/events"))
+        # The browser's equivalent. Refused, it does not stop recording — it
+        # stops the page learning that recording is on, which disables capture
+        # for the whole maintenance and looks like a broken feature after.
+        assert not RequestContextMiddleware._closed_to(
+            NOBODY, scope("/api/v1/analytics/client-flags"))
 
     def test_the_exemptions_are_the_narrow_ones(self, closed):
         # Every other analytics endpoint is closed like anything else — the
