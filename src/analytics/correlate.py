@@ -88,6 +88,50 @@ WHERE target.request_id = source.request_id
 """
 
 
+#: A browser session, attributed from the activity recorded during it.
+#:
+#: The other statements here key on the request; this one keys on the session,
+#: because a session row is written once — at the first beacon of a visit —
+#: and has no request to borrow from. When that beacon goes out before the
+#: token is available, or before the person signs in at all, the row is
+#: written with no identity and nothing ever fills it in.
+#:
+#: The consequence was a page that contradicted itself: the people report
+#: counts a person's sessions from `analytics.event`, whose identity *is*
+#: correlated, so it said "3 sessions"; the session board filters
+#: `client_session.user_id`, which was never correlated, so opening that
+#: person showed none of them.
+#:
+#: Same guard as the request join, for the same reason: a browser session can
+#: legitimately carry two people (someone signs out, someone else signs in),
+#: and where it does the right answer is unknown. Consent is respected for
+#: free — `event.user_id` is already NULL for anyone who did not consent, and
+#: copying a NULL copies a NULL.
+_RESOLVE_SESSIONS = """
+UPDATE analytics.client_session AS target
+SET user_id = source.user_id
+FROM (
+    SELECT client_session_id,
+           min(user_id) AS user_id
+    FROM analytics.event
+    WHERE client_session_id IS NOT NULL
+      AND user_id IS NOT NULL
+      AND occurred_at >= now() - make_interval(hours => :hours)
+    GROUP BY client_session_id
+    HAVING count(DISTINCT user_id) = 1
+) AS source
+WHERE target.session_id = source.client_session_id
+  AND target.user_id IS NULL
+  AND target.started_at >= now() - make_interval(hours => :hours)
+  AND target.session_id IN (
+      SELECT session_id FROM analytics.client_session
+      WHERE user_id IS NULL
+        AND started_at >= now() - make_interval(hours => :hours)
+      LIMIT :batch
+  )
+"""
+
+
 #: Feedback carries the request that produced the thing being rated, and the
 #: model call for that same request recorded its Langfuse trace. Joining the
 #: two turns a column that nothing ever wrote into a link from a complaint to
@@ -172,6 +216,20 @@ async def resolve_identities(
                 "analytics.correlate_failed table=%s", table, exc_info=True
             )
             filled[table] = -1
+
+    # Sessions, keyed on the session rather than the request. Separate because
+    # the statement joins on a different column and the table has no
+    # `request_id` to offer.
+    try:
+        async with session_factory()() as db:
+            result = await db.execute(
+                text(_RESOLVE_SESSIONS), {"hours": hours, "batch": batch}
+            )
+            await db.commit()
+            filled["client_session"] = int(result.rowcount or 0)
+    except Exception:
+        logger.warning("analytics.correlate_failed table=client_session", exc_info=True)
+        filled["client_session"] = -1
 
     total = sum(count for count in filled.values() if count > 0)
     if total:

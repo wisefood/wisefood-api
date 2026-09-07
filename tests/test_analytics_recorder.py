@@ -874,3 +874,56 @@ class TestAFailedSearchIsNotAZeroResult:
             result_count_first_pass=0, result_count_final=0,
         )
         assert _queued(recorder)[0].values["zero_result"] is True
+
+
+class TestSessionIdentityCorrelation:
+    """A browser session is attributed from the activity recorded during it.
+
+    The session row is written at the first beacon of a visit, often before
+    the token exists, so it starts with no identity and no request to borrow
+    one from. Nothing filled it in, which made the console contradict itself:
+    the people report counts a person's sessions from `analytics.event` (whose
+    identity *is* correlated) and said "3 sessions", while the session board
+    filters `client_session.user_id` and showed none of them.
+
+    Verified against a real Postgres separately; what is guarded here is that
+    the statement keeps the properties that make it safe to run on a timer.
+    """
+
+    def test_it_joins_sessions_to_events_not_requests(self):
+        from analytics.correlate import _RESOLVE_SESSIONS
+
+        assert "UPDATE analytics.client_session" in _RESOLVE_SESSIONS
+        assert "target.session_id = source.client_session_id" in _RESOLVE_SESSIONS
+        # There is no request_id on this table to join through.
+        assert "request_id" not in _RESOLVE_SESSIONS
+
+    def test_a_session_two_people_shared_is_left_alone(self):
+        from analytics.correlate import _RESOLVE_SESSIONS
+
+        # Someone signs out and someone else signs in on the same tab. The
+        # right answer is unknown, and unattributed beats wrongly attributed.
+        assert "HAVING count(DISTINCT user_id) = 1" in _RESOLVE_SESSIONS
+
+    def test_it_only_fills_blanks_and_only_recent_ones(self):
+        from analytics.correlate import _RESOLVE_SESSIONS
+
+        assert "target.user_id IS NULL" in _RESOLVE_SESSIONS
+        assert "started_at >= now() - make_interval(hours => :hours)" in _RESOLVE_SESSIONS
+        assert "LIMIT :batch" in _RESOLVE_SESSIONS
+
+    def test_consent_is_inherited_rather_than_re_decided(self):
+        from analytics.correlate import _RESOLVE_SESSIONS
+
+        # event.user_id is already NULL for anyone who did not consent, so
+        # requiring it non-null is the whole of the consent check.
+        assert "AND user_id IS NOT NULL" in _RESOLVE_SESSIONS
+
+    def test_the_pass_runs_with_the_others(self):
+        import inspect
+
+        from analytics import correlate
+
+        source = inspect.getsource(correlate.resolve_identities)
+        assert "_RESOLVE_SESSIONS" in source
+        assert 'filled["client_session"]' in source
