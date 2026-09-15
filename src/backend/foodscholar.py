@@ -272,6 +272,68 @@ class FoodScholar:
     async def get_enrichment_overview(cls):
         return await cls.get("/api/v1/enrich/overview")
 
+    # ---------------------------------------------------------------------
+    # Source Integrator
+    #
+    # FoodScholar takes the caller's subject in the body, as every other
+    # surface here does — it authenticates nobody and trusts this gateway to
+    # say who is calling. The routes above are role-gated at this end, which
+    # is what makes that trust sound.
+    # ---------------------------------------------------------------------
+
+    @classmethod
+    async def integrator_create_session(cls, payload: dict):
+        return await cls.post("/api/v1/integrator/sessions", json=payload)
+
+    @classmethod
+    async def integrator_list_sessions(cls, user_sub: str, limit: int = 50):
+        return await cls.get("/api/v1/integrator/sessions",
+                             params={"user_sub": user_sub, "limit": limit})
+
+    @classmethod
+    async def integrator_history(cls, session_id: str, user_sub: str):
+        return await cls.get(f"/api/v1/integrator/sessions/{session_id}/history",
+                             params={"user_sub": user_sub})
+
+    @classmethod
+    async def integrator_chat(cls, session_id: str, payload: dict):
+        return await cls.post(f"/api/v1/integrator/sessions/{session_id}/chat",
+                              json=payload)
+
+    @classmethod
+    async def integrator_list_proposals(cls, params: dict):
+        return await cls.get("/api/v1/integrator/proposals", params=params)
+
+    @classmethod
+    async def integrator_get_proposal(cls, proposal_id: str):
+        return await cls.get(f"/api/v1/integrator/proposals/{proposal_id}")
+
+    @classmethod
+    async def integrator_create_proposal(cls, payload: dict):
+        return await cls.post("/api/v1/integrator/proposals", json=payload)
+
+    @classmethod
+    async def integrator_approve(cls, proposal_id: str, payload: dict):
+        return await cls.post(
+            f"/api/v1/integrator/proposals/{proposal_id}/approve", json=payload)
+
+    @classmethod
+    async def integrator_reject(cls, proposal_id: str, payload: dict):
+        return await cls.post(
+            f"/api/v1/integrator/proposals/{proposal_id}/reject", json=payload)
+
+    @classmethod
+    async def integrator_rerank(cls, payload: dict):
+        return await cls.post("/api/v1/integrator/proposals/rerank", json=payload)
+
+    @classmethod
+    async def integrator_backlog(cls, params: dict):
+        return await cls.get("/api/v1/integrator/backlog", params=params)
+
+    @classmethod
+    async def integrator_audit(cls, params: dict):
+        return await cls.get("/api/v1/integrator/audit", params=params)
+
     @classmethod
     async def enqueue_enrichment_batch(cls, payload: dict):
         return await cls.post("/api/v1/enrich/batches", json=payload)

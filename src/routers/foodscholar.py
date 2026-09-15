@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query, Request, Depends
 from fastapi.responses import StreamingResponse
 from routers.generic import render
 from typing import List, Optional
+from pydantic import BaseModel, Field
 import logging
 from auth import auth
 from schemas import (
@@ -642,3 +643,168 @@ async def activate_guide_guidelines(
         require_verified=require_verified,
         dry_run=dry_run,
     )
+
+
+# ---------------------------------------------------------------------------
+# Source Integrator
+#
+# Every route here is admin-or-expert. The integrator researches sources, can
+# reach the open web, and — from Phase 2 — writes to the catalog; it is not a
+# participant-facing surface and must never become one by a missing dependency.
+#
+# `user_sub` is taken from the token and put in the body, never accepted from
+# the client: FoodScholar trusts whatever subject it is handed, so the moment
+# a caller could name their own, one curator could read another's sessions.
+# ---------------------------------------------------------------------------
+
+class IntegratorChatBody(BaseModel):
+    message: str = Field(min_length=1, max_length=8000)
+
+
+class IntegratorSessionBody(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=300)
+
+
+class IntegratorProposalBody(BaseModel):
+    session_id: Optional[str] = None
+    kind: str
+    title: str = Field(max_length=500)
+    source_url: Optional[str] = None
+    country: Optional[str] = None
+    language: Optional[str] = None
+    population_group: Optional[str] = None
+    licence: Optional[str] = None
+    rationale: Optional[str] = None
+
+
+class IntegratorApproveBody(BaseModel):
+    override_reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+class IntegratorRejectBody(BaseModel):
+    reason: str = Field(default="", max_length=1000)
+
+
+class IntegratorRerankBody(BaseModel):
+    order: List[str]
+
+
+def _integrator_sub(request: Request) -> str:
+    return kutils.current_user(request)["sub"]
+
+
+@router.post("/integrator/sessions", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_create_session(request: Request, body: IntegratorSessionBody):
+    """Start a conversation with the source integrator."""
+    return await FOODSCHOLAR.integrator_create_session(
+        {"user_sub": _integrator_sub(request), "title": body.title})
+
+
+@router.get("/integrator/sessions", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_list_sessions(request: Request, limit: int = 50):
+    """This curator's own conversations."""
+    return await FOODSCHOLAR.integrator_list_sessions(_integrator_sub(request), limit)
+
+
+@router.get("/integrator/sessions/{session_id}/history",
+            dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_history(request: Request, session_id: str):
+    return await FOODSCHOLAR.integrator_history(session_id, _integrator_sub(request))
+
+
+@router.post("/integrator/sessions/{session_id}/chat",
+             dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_chat(request: Request, session_id: str, body: IntegratorChatBody):
+    """One turn. The model may search the web and read the catalog."""
+    return await FOODSCHOLAR.integrator_chat(
+        session_id, {"user_sub": _integrator_sub(request), "message": body.message})
+
+
+@router.get("/integrator/proposals", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_list_proposals(request: Request, session_id: Optional[str] = None,
+                                    status: Optional[str] = None, limit: int = 100):
+    params = {"limit": limit}
+    if session_id:
+        params["session_id"] = session_id
+    if status:
+        params["status"] = status
+    return await FOODSCHOLAR.integrator_list_proposals(params)
+
+
+@router.get("/integrator/proposals/{proposal_id}",
+            dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_get_proposal(request: Request, proposal_id: str):
+    return await FOODSCHOLAR.integrator_get_proposal(proposal_id)
+
+
+@router.post("/integrator/proposals", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_create_proposal(request: Request, body: IntegratorProposalBody):
+    """Add a candidate source by hand."""
+    return await FOODSCHOLAR.integrator_create_proposal(
+        {**body.model_dump(exclude_none=True), "user_sub": _integrator_sub(request)})
+
+
+@router.post("/integrator/proposals/{proposal_id}/approve",
+             dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_approve(request: Request, proposal_id: str,
+                             body: IntegratorApproveBody):
+    """Approve a proposal for integration.
+
+    The only way a proposal becomes integratable, and it is a person doing it:
+    there is no tool the model can call that reaches this.
+    """
+    return await FOODSCHOLAR.integrator_approve(
+        proposal_id, {"user_sub": _integrator_sub(request),
+                      "override_reason": body.override_reason})
+
+
+@router.post("/integrator/proposals/{proposal_id}/reject",
+             dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_reject(request: Request, proposal_id: str,
+                            body: IntegratorRejectBody):
+    return await FOODSCHOLAR.integrator_reject(
+        proposal_id, {"user_sub": _integrator_sub(request), "reason": body.reason})
+
+
+@router.post("/integrator/proposals/rerank", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_rerank(request: Request, body: IntegratorRerankBody):
+    """Put the proposals in the order the curator wants them."""
+    return await FOODSCHOLAR.integrator_rerank(
+        {"user_sub": _integrator_sub(request), "order": body.order})
+
+
+@router.get("/integrator/backlog", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_backlog(request: Request, kind: Optional[str] = None,
+                             status: Optional[str] = None, limit: int = 100,
+                             offset: int = 0):
+    """The queue of candidate sources."""
+    params = {"limit": limit, "offset": offset}
+    if kind:
+        params["kind"] = kind
+    if status:
+        params["status"] = status
+    return await FOODSCHOLAR.integrator_backlog(params)
+
+
+@router.get("/integrator/audit", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_audit(request: Request, session_id: Optional[str] = None,
+                           proposal_id: Optional[str] = None, limit: int = 100):
+    """Every tool the agent ran, with what it was given and what came back."""
+    params = {"limit": limit}
+    if session_id:
+        params["session_id"] = session_id
+    if proposal_id:
+        params["proposal_id"] = proposal_id
+    return await FOODSCHOLAR.integrator_audit(params)
