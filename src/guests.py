@@ -211,6 +211,120 @@ async def create_guest() -> Dict[str, Any]:
     }
 
 
+def is_guest(user_id: str) -> bool:
+    """Whether this Keycloak user still holds the guest role.
+
+    The role, not the attribute: Keycloak 24+ silently drops attributes the
+    realm's user profile does not declare, so `wisefood_guest` may never have
+    been stored. The role is assigned through its own API call and survives.
+    """
+    admin = KEYCLOAK_ADMIN_CLIENT()
+    try:
+        roles = admin.get_realm_roles_of_user(user_id) or []
+    except Exception:
+        logger.warning("Could not read roles for %s", user_id, exc_info=True)
+        return False
+    return any((r or {}).get("name") == GUEST_ROLE for r in roles)
+
+
+async def claim_guest(
+    user_id: str,
+    *,
+    email: str,
+    password: str,
+    first_name: str = "",
+    last_name: str = "",
+) -> Dict[str, Any]:
+    """Turn a guest into a permanent account, in place.
+
+    Nothing moves. A guest is already a real Keycloak user, and everything
+    they made is owned by their `sub` or by the household provisioned for it,
+    so keeping the same user keeps the meal plans, the chat sessions and the
+    household exactly where they are. There is no migration to get wrong and
+    no window where their content belongs to nobody.
+
+    The writes are ordered so that a failure falls *backwards* into "still a
+    guest", which is retryable, rather than forwards into "no longer a guest
+    and cannot sign in", which is not:
+
+    1. credentials and identity — a guest who gains a password is unharmed
+    2. the role — once it is gone the reaper cannot see them, so this is the
+       step that makes the account permanent
+    3. the attributes — cosmetic by then, since the reaper matches on the role
+
+    The email is left unverified and Keycloak is asked to send its own
+    verification mail. Marking it verified here would be friendlier by one
+    click and would let anybody claim an address they do not own, which
+    permanently blocks the real owner from registering it.
+    """
+    from exceptions import ConflictError as _Conflict  # local: see module head
+
+    email = (email or "").strip().lower()
+    if not email:
+        raise ValueError("email is required")
+
+    if not is_guest(user_id):
+        raise AuthorizationError(detail="This account is not a guest account")
+
+    admin = KEYCLOAK_ADMIN_CLIENT()
+
+    # Refuse a collision rather than trying to merge. Merging two households is
+    # a real migration with real ways to lose data, and the share link is the
+    # better answer for "I already have an account and want this plan".
+    existing = admin.get_users({"email": email}) or []
+    if any(u.get("id") != user_id for u in existing):
+        raise _Conflict(
+            "That email already has a WiseFood account. Sign in to it instead — "
+            "you can share this plan to yourself from here first."
+        )
+
+    # (1) Identity and credentials. The realm registers email as username, so
+    # the username moves too — leaving `guest-<hex>` behind would also leave a
+    # permanent account matching the reaper's username guard.
+    admin.update_user(user_id, {
+        "username": email,
+        "email": email,
+        "emailVerified": False,
+        **({"firstName": first_name.strip()} if first_name.strip() else {}),
+        **({"lastName": last_name.strip()} if last_name.strip() else {}),
+    })
+    admin.set_user_password(user_id, password, temporary=False)
+
+    # (2) The role. After this the account is invisible to `reap_expired_guests`
+    # and therefore permanent, which is why it comes before the tidying.
+    try:
+        admin.delete_realm_roles_of_user(user_id, [admin.get_realm_role(GUEST_ROLE)])
+    except Exception:
+        logger.exception("Claim %s: guest role could not be removed", user_id)
+        raise
+
+    # (3) Tidying. Best-effort: the account is already permanent, and failing
+    # the claim here would tell the user it did not work when it did.
+    try:
+        admin.update_user(user_id, {"attributes": {
+            GUEST_ATTRIBUTE: [], GUEST_EXPIRES_ATTRIBUTE: [],
+        }})
+    except Exception:
+        logger.warning("Claim %s: guest attributes not cleared", user_id, exc_info=True)
+
+    try:
+        admin.send_verify_email(user_id=user_id)
+        verification_sent = True
+    except Exception:
+        # Keycloak's SMTP is separate from ours and may not be configured.
+        # An unverified address is a smaller problem than a failed claim.
+        logger.warning("Claim %s: verification mail not sent", user_id, exc_info=True)
+        verification_sent = False
+
+    logger.info("Guest %s claimed as a permanent account", user_id)
+    return {
+        "user_id": user_id,
+        "email": email,
+        "email_verified": False,
+        "verification_sent": verification_sent,
+    }
+
+
 async def delete_guest(user_id: str) -> None:
     """Tear down a guest: chat sessions, household (cascades), Keycloak user.
 
@@ -222,7 +336,12 @@ async def delete_guest(user_id: str) -> None:
     """
     from erasure import purge_user
 
-    summary = await purge_user(user_id)
+    # `keep_shares`: a guest whose lifetime ran out never asked to be erased,
+    # and a link they sent somebody should not break the moment their session
+    # did. The snapshot names nobody, so it is given a grace period rather
+    # than deleted — and coming back to keep the account is how it stops
+    # expiring at all.
+    summary = await purge_user(user_id, keep_shares=True)
     if not summary["account_deleted"]:
         raise RuntimeError(f"Guest {user_id} could not be deleted from Keycloak")
     logger.info("Guest %s deleted", user_id)

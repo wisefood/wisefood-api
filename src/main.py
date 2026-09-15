@@ -126,6 +126,33 @@ class Config:
         self.settings["GUEST_REAPER_INTERVAL_SECONDS"] = int(
             os.getenv("GUEST_REAPER_INTERVAL_SECONDS", 600)
         )
+        # Outgoing mail. Unset SMTP_HOST disables sending entirely rather than
+        # failing at send time: a deployment without a mail server should
+        # refuse the feature up front, not accept a request and lose it.
+        # Keycloak's own SMTP is configured separately and is unrelated —
+        # it sends verification and reset mail, this sends product mail.
+        self.settings["SMTP_HOST"] = os.getenv("SMTP_HOST", "").strip()
+        self.settings["SMTP_PORT"] = _env_port("SMTP_PORT", 587)
+        self.settings["SMTP_USERNAME"] = os.getenv("SMTP_USERNAME", "").strip()
+        self.settings["SMTP_PASSWORD"] = os.getenv("SMTP_PASSWORD", "")
+        # STARTTLS on the submission port is the norm; implicit TLS (465) and
+        # an unencrypted local relay are both reachable by setting these.
+        self.settings["SMTP_STARTTLS"] = (
+            os.getenv("SMTP_STARTTLS", "true").lower() == "true"
+        )
+        self.settings["SMTP_SSL"] = os.getenv("SMTP_SSL", "false").lower() == "true"
+        self.settings["SMTP_FROM"] = (
+            os.getenv("SMTP_FROM", "").strip()
+            or os.getenv("SMTP_USERNAME", "").strip()
+        )
+        self.settings["SMTP_FROM_NAME"] = os.getenv("SMTP_FROM_NAME", "WiseFood")
+        self.settings["SMTP_TIMEOUT_SECONDS"] = int(
+            os.getenv("SMTP_TIMEOUT_SECONDS", 20)
+        )
+        # How many mails one account may send per day. Sharing to somebody
+        # else is a send from our domain on their say-so, which is a spam
+        # relay if it is unbounded.
+        self.settings["MAIL_DAILY_LIMIT"] = int(os.getenv("MAIL_DAILY_LIMIT", 20))
         self.settings["CACHE_ENABLED"] = (
             os.getenv("CACHE_ENABLED", "false").lower() == "true"
         )
@@ -281,6 +308,7 @@ install_error_handler(api)
 from routers.households import router as households_router
 from routers.household_members import router as household_members_router
 from routers.core import router as core_router
+from routers.shares import router as shares_router
 from routers.foodscholar import router as foodscholar_router
 from routers.recipewrangler import router as recipewrangler_router
 from routers.foodchat import router as foodchat_router
@@ -293,6 +321,7 @@ from routers.analytics import router as analytics_router
 api.include_router(households_router)
 api.include_router(household_members_router)
 api.include_router(core_router)
+api.include_router(shares_router)
 api.include_router(foodscholar_router)
 api.include_router(recipewrangler_router)
 api.include_router(foodchat_router)

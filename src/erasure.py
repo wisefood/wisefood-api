@@ -36,7 +36,9 @@ from backend.keycloak import KEYCLOAK_ADMIN_CLIENT
 logger = logging.getLogger(__name__)
 
 
-async def purge_user(user_id: str, *, delete_account: bool = True) -> Dict[str, Any]:
+async def purge_user(
+    user_id: str, *, delete_account: bool = True, keep_shares: bool = False
+) -> Dict[str, Any]:
     """Erase everything provisioned for a Keycloak user.
 
     Best-effort per step and never raises for a partial failure: a household
@@ -47,6 +49,10 @@ async def purge_user(user_id: str, *, delete_account: bool = True) -> Dict[str, 
 
     :param user_id: Keycloak user id (token ``sub`` claim)
     :param delete_account: also delete the Keycloak user itself
+    :param keep_shares: leave share links readable for a grace period instead
+        of deleting them. For a guest whose lifetime ran out — they never asked
+        to be erased, and a link somebody else is holding should not break the
+        moment their session did. Never for a request to be erased.
     :return: summary of what was removed and what failed
     """
     from api.v1.households import HOUSEHOLD
@@ -58,6 +64,7 @@ async def purge_user(user_id: str, *, delete_account: bool = True) -> Dict[str, 
         "members_deleted": 0,
         "chat_sessions_deleted": 0,
         "analytics_rows_anonymised": 0,
+        "shares_removed": 0,
         "account_deleted": False,
         "failures": [],
     }
@@ -95,6 +102,16 @@ async def purge_user(user_id: str, *, delete_account: bool = True) -> Dict[str, 
         except Exception:
             logger.warning("Erasure %s: household deletion failed", user_id, exc_info=True)
             summary["failures"].append("household")
+
+    try:
+        from sharing import purge_owner_shares
+
+        summary["shares_removed"] = await purge_owner_shares(
+            user_id, grace=keep_shares
+        )
+    except Exception:
+        logger.warning("Erasure %s: share cleanup failed", user_id, exc_info=True)
+        summary["failures"].append("shares")
 
     try:
         summary["analytics_rows_anonymised"] = await anonymise_analytics(user_id)

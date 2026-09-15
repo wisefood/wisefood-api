@@ -9,7 +9,7 @@ from datetime import date as DateType, datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from pydantic import EmailStr, BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 # ------- System Schemas -------
@@ -2009,6 +2009,18 @@ class ErrorStatusUpdate(BaseModel):
 
 class ClientErrorBatch(BaseModel):
     events: List[ClientErrorIn] = Field(min_length=1, max_length=25)
+
+
+class GuestClaim(BaseModel):
+    """What a guest supplies to keep the account they have been using."""
+
+    email: EmailStr
+    #: Long rather than complex. Length is what resists guessing; character
+    #: classes mostly move the difficulty from the attacker to the person
+    #: typing it, and the realm enforces its own policy over the top of this.
+    password: str = Field(min_length=10, max_length=256)
+    first_name: str = Field(default="", max_length=100)
+    last_name: str = Field(default="", max_length=100)
 
 
 class InteractionIn(BaseModel):

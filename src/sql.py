@@ -855,6 +855,34 @@ class AnalyticsSetting(Base):
 # relationships into `wisefood`, and these models must track that file.
 
 
+class ShareLink(Base):
+    """A snapshot published behind an unguessable token.
+
+    The payload lives here rather than being read back from the plan it came
+    from: a link that changes under the person you sent it to, or 404s because
+    you tidied up, is worse than no link. It also lets a guest's share outlive
+    the guest.
+    """
+
+    __tablename__ = "share_link"
+    __table_args__ = {"schema": "wisefood"}
+
+    token = mapped_column(String(64), primary_key=True)
+    kind = mapped_column(String(32), nullable=False)
+    source_id = mapped_column(String(100), nullable=True)
+    owner_id = mapped_column(String(100), nullable=False)
+    title = mapped_column(String(200), nullable=True)
+    payload = mapped_column(JSONB, nullable=False, default=dict)
+    created_at = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    expires_at = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at = mapped_column(DateTime(timezone=True), nullable=True)
+    view_count = mapped_column(Integer, nullable=False, default=0)
+    last_viewed_at = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ClientSession(Base):
     """One browser session, and the machine it happened on."""
 

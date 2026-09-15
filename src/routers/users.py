@@ -25,6 +25,7 @@ from schemas import (
     UserConsentCreate,
     UserConsentRecord,
     UserConsentStatus,
+    GuestClaim,
 )
 from api.v1.users import USER_CONSENT, DEFAULT_CONSENT_TYPE
 
@@ -190,6 +191,37 @@ async def api_record_my_consent(
     )
 
     return UserConsentRecord(**consent)
+
+
+@router.post(
+    "/me/claim",
+    dependencies=[Depends(auth())],
+    summary="Turn the current guest account into a permanent one",
+    description=(
+        "Keep a guest session as a real account. Nothing is copied or moved: "
+        "a guest is already a Keycloak user, so the same account gains an "
+        "email and a password and stops expiring, and every meal plan, chat "
+        "and household setting stays exactly where it is. The email is left "
+        "unverified and Keycloak is asked to send its verification mail. "
+        "Refuses if the email already belongs to an account — merging two "
+        "households is not something this can do safely."
+    ),
+)
+@render()
+async def api_claim_guest_account(request: Request, body: GuestClaim):
+    """Upgrade the caller's own guest account. The user id comes from the
+    token's `sub`, never from the body — this must never be able to claim
+    somebody else's session."""
+    from guests import claim_guest
+
+    user_id = kutils.current_user(request)["sub"]
+    return await claim_guest(
+        user_id,
+        email=body.email,
+        password=body.password,
+        first_name=body.first_name,
+        last_name=body.last_name,
+    )
 
 
 @router.get(
