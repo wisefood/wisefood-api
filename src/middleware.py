@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 #: everything else. Matched against the ROUTE TEMPLATE, never the URL — the
 #: service runs behind a `/rest` root path and `request.url.path` carries it.
 _UNRECORDED_ROUTES = ("/api/v1/analytics/", "/api/v1/system/ping")
+#: Paths whose responses must never be indexed, and must never let the URL
+#: travel onward in a `Referer`.
+#:
+#: Applied here rather than in the route because a share's token is the only
+#: thing protecting it, and the route only gets to set headers when it
+#: succeeds — `render()` builds a fresh response for an error, so the 404 for
+#: an unknown token arrived bare. The headers have to hold on every response
+#: on this path, whatever happened.
+_NO_INDEX_PREFIXES = ("/api/v1/shares/public/",)
+
 #: Paths that stay open during maintenance, matched against the URL path with
 #: any root path stripped. The status endpoints so the browser can learn the
 #: platform is closed; the settings endpoints so an admin can open it again —
@@ -170,9 +180,20 @@ class RequestContextMiddleware:
 
         started = time.perf_counter()
 
+        raw_path = scope.get("path") or ""
+        root = scope.get("root_path") or ""
+        if root and raw_path.startswith(root):
+            raw_path = raw_path[len(root):] or "/"
+        public_share = raw_path.startswith(_NO_INDEX_PREFIXES)
+
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                MutableHeaders(scope=message)[context.REQUEST_ID_HEADER] = request_id
+                headers = MutableHeaders(scope=message)
+                headers[context.REQUEST_ID_HEADER] = request_id
+                if public_share:
+                    headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+                    headers["Referrer-Policy"] = "no-referrer"
+                    headers["Cache-Control"] = "private, no-store"
                 # Routing has happened by now, so the route template is known.
                 route = scope.get("route")
                 path = getattr(route, "path", None)
