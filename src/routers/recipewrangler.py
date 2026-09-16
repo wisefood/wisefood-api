@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Request, Depends, Query
+from typing import Optional
+from pydantic import BaseModel, Field
 from routers.generic import render
 import logging
 from auth import auth, _extract_roles
@@ -446,3 +448,52 @@ async def enable_recipe(recipe_id: str, request: Request):
     """Re-enable a previously disabled recipe."""
     result = await RECIPEWRANGLER.enable_recipe(recipe_id)
     return RecipeStatusResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Source import
+#
+# Admin and expert only. It writes recipes into the corpus and fetches at
+# length from somebody else's site; neither is a participant-facing action.
+# ---------------------------------------------------------------------------
+
+class SourceImportBody(BaseModel):
+    location: str = Field(max_length=2000)
+    source_slug: Optional[str] = Field(default=None, max_length=64)
+    region: str = Field(default="IE", max_length=8)
+    include: Optional[str] = Field(default=None, max_length=300)
+    exclude: Optional[str] = Field(default=None, max_length=300)
+    limit: int = Field(default=200, ge=1, le=5000)
+    delay: float = Field(default=1.0, ge=0, le=30)
+    respect_robots: bool = True
+    #: Defaults to a preview, on both sides. Reading a source costs fetches;
+    #: writing it costs a profiling run per recipe and is much harder to undo.
+    dry_run: bool = True
+
+
+@router.post("/ingest/source", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def start_source_import(payload: SourceImportBody, request: Request):
+    """Start importing a source from its sitemap or feed. Returns a run to poll."""
+    return await RECIPEWRANGLER.start_source_import(payload.model_dump())
+
+
+@router.get("/ingest/source/runs", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def list_source_imports(request: Request, limit: int = 20):
+    """Recent source imports, newest first."""
+    return await RECIPEWRANGLER.source_import_runs(limit)
+
+
+@router.get("/ingest/source/runs/{run_id}", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def get_source_import(run_id: str, request: Request):
+    """One source import and how far it has got."""
+    return await RECIPEWRANGLER.source_import_run(run_id)
+
+
+@router.get("/ingest/sources", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def list_ingest_sources(request: Request):
+    """The source registry, with what each licence permits."""
+    return await RECIPEWRANGLER.ingest_sources()

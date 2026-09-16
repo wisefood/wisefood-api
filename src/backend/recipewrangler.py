@@ -172,6 +172,24 @@ class RecipeWrangler:
             await cls._client.aclose()
             cls._client = None
 
+    # The transport already forwards the caller's identity headers, so
+    # RecipeWrangler applies this person's roles without anything extra here.
+    @classmethod
+    async def start_source_import(cls, payload: dict):
+        return await cls.post("/api/v1/ingest/source", json=payload)
+
+    @classmethod
+    async def source_import_runs(cls, limit: int = 20):
+        return await cls.get("/api/v1/ingest/source/runs", params={"limit": limit})
+
+    @classmethod
+    async def source_import_run(cls, run_id: str):
+        return await cls.get(f"/api/v1/ingest/source/runs/{run_id}")
+
+    @classmethod
+    async def ingest_sources(cls):
+        return await cls.get("/api/v1/ingest/sources")
+
     @classmethod
     async def status(cls):
         return await cls.get("/health")
