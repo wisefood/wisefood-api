@@ -477,8 +477,18 @@ async def list_qa_questions(request: Request):
 
 @router.get("/qa/tips", dependencies=[Depends(auth())])
 @render()
-async def list_qa_tips(request: Request, member_id: Optional[str] = None):
-    return await FOODSCHOLAR.get_tips(member_id=member_id)
+async def list_qa_tips(
+    request: Request,
+    member_id: Optional[str] = None,
+    language: Optional[str] = None,
+):
+    # The tip is generated, so it is only in the reader's language if we say
+    # which one. Falls back to the locale the browser already sends on every
+    # request, so a caller that forgets the parameter still gets it right.
+    return await FOODSCHOLAR.get_tips(
+        member_id=member_id,
+        language=language or context.get_locale() or "en",
+    )
 
 
 @router.get("/guidelines/storage/{artifact_uuid}", dependencies=[Depends(auth())])

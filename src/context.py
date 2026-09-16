@@ -143,6 +143,13 @@ def get_household_id() -> Optional[str]:
     return _HOUSEHOLD_ID.get()
 
 
+def get_locale() -> Optional[str]:
+    # The middleware binds this from X-WiseFood-Locale or Accept-Language on
+    # every request, but it was the one bound value with no reader, so routes
+    # that generate text had no way to ask which language to generate in.
+    return _LOCALE.get()
+
+
 def set_household_id(household_id: Optional[str]) -> None:
     """Record which household a request acts within. Set with the member,
     at the point ownership was checked — never from a request body."""

@@ -253,11 +253,19 @@ class FoodScholar:
         return await FOODSCHOLAR.get("/api/v1/qa/questions")
 
     @classmethod
-    async def get_tips(cls, member_id: Optional[str] = None):
+    async def get_tips(
+        cls, member_id: Optional[str] = None, language: Optional[str] = None
+    ):
         # member_id personalizes tips against the member's accumulated
         # profile (FoodScholar falls back to generic content without it).
-        params = {"member_id": member_id} if member_id else None
-        return await FOODSCHOLAR.get("/api/v1/qa/tips", params=params)
+        # language decides what the generated text is written in, and is part
+        # of FoodScholar's cache key, so it must be sent rather than assumed.
+        params: dict = {}
+        if member_id:
+            params["member_id"] = member_id
+        if language:
+            params["language"] = language
+        return await FOODSCHOLAR.get("/api/v1/qa/tips", params=params or None)
 
     @classmethod
     async def enqueue_article_enrichment(cls, urn: str, payload: dict):
