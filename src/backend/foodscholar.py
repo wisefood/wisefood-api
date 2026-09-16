@@ -13,6 +13,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+#: The header the Source Integrator's caller token travels in.
+#:
+#: Only the integrator sends it, and only because its agent reads and writes
+#: the catalog on the caller's behalf: the catalog then applies *their* roles
+#: rather than a service account's, so the assistant cannot do what the person
+#: driving it may not. Every other FoodScholar surface identifies the caller by
+#: subject in the body and needs no credential of theirs.
+DELEGATED_TOKEN_HEADER = "X-WiseFood-Delegated-Token"
+
+
+def _delegated(token: Optional[str]) -> Optional[Dict[str, str]]:
+    return {DELEGATED_TOKEN_HEADER: token} if token else None
+
+
 class FoodScholar:
     """Singleton HTTP client for accessing the FoodScholar API with connection pooling."""
 
@@ -296,8 +310,10 @@ class FoodScholar:
                              params={"user_sub": user_sub})
 
     @classmethod
-    async def integrator_chat(cls, session_id: str, payload: dict):
+    async def integrator_chat(cls, session_id: str, payload: dict,
+                              delegated_token: Optional[str] = None):
         return await cls.post(f"/api/v1/integrator/sessions/{session_id}/chat",
+                              headers=_delegated(delegated_token),
                               json=payload)
 
     @classmethod
@@ -335,9 +351,11 @@ class FoodScholar:
         return await cls.get("/api/v1/integrator/audit", params=params)
 
     @classmethod
-    async def integrator_integrate(cls, proposal_id: str, payload: dict):
+    async def integrator_integrate(cls, proposal_id: str, payload: dict,
+                                   delegated_token: Optional[str] = None):
         return await cls.post(
-            f"/api/v1/integrator/proposals/{proposal_id}/integrate", json=payload)
+            f"/api/v1/integrator/proposals/{proposal_id}/integrate", json=payload,
+            headers=_delegated(delegated_token))
 
     @classmethod
     async def integrator_run(cls, run_id: str):

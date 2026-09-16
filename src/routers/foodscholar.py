@@ -697,6 +697,35 @@ def _integrator_sub(request: Request) -> str:
     return kutils.current_user(request)["sub"]
 
 
+def _integrator_is_admin(request: Request) -> bool:
+    """Whether this caller may read the whole audit trail, not only their own.
+
+    Reads the same claim the route's own gate read, through the same
+    extractor, so "admin" cannot come to mean two things in one request.
+    """
+    from auth import _extract_roles
+
+    user = kutils.current_user(request) or {}
+    return "admin" in _extract_roles(user)
+
+
+def _integrator_token(request: Request) -> Optional[str]:
+    """The caller's own bearer, to be forwarded to the agent.
+
+    The agent reads and writes the catalog on this person's behalf, so it does
+    so with their token: the catalog applies their roles and refuses them
+    exactly where it would refuse them directly. Without this the agent would
+    act as a service account, and an expert who may not edit guides could edit
+    one by asking for it.
+
+    Taken from the request that this route already authenticated, so it is the
+    token whose `sub` became `user_sub` above — the two cannot disagree.
+    """
+    header = request.headers.get("authorization") or ""
+    scheme, _, token = header.partition(" ")
+    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+
 @router.post("/integrator/sessions", dependencies=[Depends(auth("admin,expert"))])
 @render()
 async def integrator_create_session(request: Request, body: IntegratorSessionBody):
@@ -725,7 +754,8 @@ async def integrator_history(request: Request, session_id: str):
 async def integrator_chat(request: Request, session_id: str, body: IntegratorChatBody):
     """One turn. The model may search the web and read the catalog."""
     return await FOODSCHOLAR.integrator_chat(
-        session_id, {"user_sub": _integrator_sub(request), "message": body.message})
+        session_id, {"user_sub": _integrator_sub(request), "message": body.message},
+        delegated_token=_integrator_token(request))
 
 
 @router.get("/integrator/proposals", dependencies=[Depends(auth("admin,expert"))])
@@ -798,7 +828,8 @@ async def integrator_integrate(request: Request, proposal_id: str,
     it reads a PDF page by page and outlasts any sensible request timeout.
     """
     return await FOODSCHOLAR.integrator_integrate(
-        proposal_id, {"user_sub": _integrator_sub(request), "dry_run": body.dry_run})
+        proposal_id, {"user_sub": _integrator_sub(request), "dry_run": body.dry_run},
+        delegated_token=_integrator_token(request))
 
 
 @router.get("/integrator/runs/{run_id}", dependencies=[Depends(auth("admin,expert"))])
@@ -838,7 +869,11 @@ async def integrator_backlog(request: Request, kind: Optional[str] = None,
 async def integrator_audit(request: Request, session_id: Optional[str] = None,
                            proposal_id: Optional[str] = None, limit: int = 100):
     """Every tool the agent ran, with what it was given and what came back."""
-    params = {"limit": limit}
+    # A tool call carries the queries a curator typed and the URLs they were
+    # chasing. That is their work, so an expert sees their own and an admin
+    # sees everything — an audit trail nobody can read in full is not one.
+    params = {"limit": limit, "user_sub": _integrator_sub(request),
+              "is_admin": _integrator_is_admin(request)}
     if session_id:
         params["session_id"] = session_id
     if proposal_id:
