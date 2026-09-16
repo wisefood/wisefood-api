@@ -689,6 +689,10 @@ class IntegratorRerankBody(BaseModel):
     order: List[str]
 
 
+class IntegratorIntegrateBody(BaseModel):
+    dry_run: bool = False
+
+
 def _integrator_sub(request: Request) -> str:
     return kutils.current_user(request)["sub"]
 
@@ -781,6 +785,38 @@ async def integrator_rerank(request: Request, body: IntegratorRerankBody):
     """Put the proposals in the order the curator wants them."""
     return await FOODSCHOLAR.integrator_rerank(
         {"user_sub": _integrator_sub(request), "order": body.order})
+
+
+@router.post("/integrator/proposals/{proposal_id}/integrate",
+             dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_integrate(request: Request, proposal_id: str,
+                               body: IntegratorIntegrateBody):
+    """Run an approved proposal into the catalog.
+
+    Returns a run to poll rather than waiting: the guideline extraction behind
+    it reads a PDF page by page and outlasts any sensible request timeout.
+    """
+    return await FOODSCHOLAR.integrator_integrate(
+        proposal_id, {"user_sub": _integrator_sub(request), "dry_run": body.dry_run})
+
+
+@router.get("/integrator/runs/{run_id}", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_run(request: Request, run_id: str):
+    """One integration run and its timeline."""
+    return await FOODSCHOLAR.integrator_run(run_id)
+
+
+@router.get("/integrator/runs", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def integrator_runs(request: Request, proposal_id: Optional[str] = None,
+                          limit: int = 20):
+    """Every attempt at a proposal, newest first."""
+    params: dict = {"limit": limit}
+    if proposal_id:
+        params["proposal_id"] = proposal_id
+    return await FOODSCHOLAR.integrator_runs(params)
 
 
 @router.get("/integrator/backlog", dependencies=[Depends(auth("admin,expert"))])

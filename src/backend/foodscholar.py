@@ -335,6 +335,19 @@ class FoodScholar:
         return await cls.get("/api/v1/integrator/audit", params=params)
 
     @classmethod
+    async def integrator_integrate(cls, proposal_id: str, payload: dict):
+        return await cls.post(
+            f"/api/v1/integrator/proposals/{proposal_id}/integrate", json=payload)
+
+    @classmethod
+    async def integrator_run(cls, run_id: str):
+        return await cls.get(f"/api/v1/integrator/runs/{run_id}")
+
+    @classmethod
+    async def integrator_runs(cls, params: dict):
+        return await cls.get("/api/v1/integrator/runs", params=params)
+
+    @classmethod
     async def enqueue_enrichment_batch(cls, payload: dict):
         return await cls.post("/api/v1/enrich/batches", json=payload)
 
