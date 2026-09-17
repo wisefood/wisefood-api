@@ -285,3 +285,19 @@ class TestScrubbingAWeeklyPlan:
         import pytest as _pytest
         with _pytest.raises(ValueError, match="No scrubber"):
             sharing.scrub("shopping_list", {})
+
+
+def test_a_foodchat_daily_plan_is_a_kind_of_its_own():
+    """FoodChat's plans do not exist in the gateway's meal_plan table — today's
+    three plan ids matched zero rows there — so sharing one under `meal_plan`
+    404'd on every plan a person could actually see."""
+    import sharing
+    assert "daily_meal_plan" in sharing.KINDS
+    # Same shape as the gateway's daily plan, so the same scrubber.
+    out = sharing.scrub("daily_meal_plan", {
+        "breakfast": {"title": "Porridge", "household_id": "hh-1"},
+        "reasoning": "Because Tom is allergic",
+        "date": "2026-09-17",
+    })
+    assert out["meals"]["breakfast"]["title"] == "Porridge"
+    assert "hh-1" not in str(out) and "Tom" not in str(out)

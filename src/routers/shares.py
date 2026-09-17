@@ -27,47 +27,52 @@ router = APIRouter(prefix="/api/v1/shares", tags=["Sharing"])
 class ShareCreate(BaseModel):
     """What to publish. The payload is not accepted from the client."""
 
-    kind: str = Field(description="meal_plan | saved_meal_plan | weekly_meal_plan")
+    kind: str = Field(description="meal_plan | saved_meal_plan | daily_meal_plan | weekly_meal_plan")
     id: str = Field(max_length=100, description="The plan to share")
-    #: Required for `weekly_meal_plan`. A weekly plan lives in FoodChat and is
-    #: only reachable as a member's *current* plan, so sharing one needs to
-    #: know whose — and ownership is checked through that member rather than
-    #: through a household on a local row.
+    #: Required for the FoodChat kinds. Those plans are only reachable as a
+    #: member's *current* plan, so sharing one needs to know whose — and
+    #: ownership is checked through that member rather than through a
+    #: household on a local row.
     member_id: Optional[str] = Field(default=None, max_length=100)
     title: str = Field(default="", max_length=200)
     #: None means "until revoked".
     expires_in_days: Optional[int] = Field(default=None, ge=1, le=365)
 
 
-async def _load_owned_weekly_plan(request: Request, plan_id: str, member_id: str):
-    """The member's current weekly plan, if it is the one being asked for.
+FOODCHAT_KINDS = {"daily_meal_plan": "meal_plan", "weekly_meal_plan": "weekly_meal_plan"}
 
-    A weekly plan lives in FoodChat, which exposes it as "this member's
-    current weekly plan" rather than by id — there is no fetch-by-id. So the
-    plan asked for has to *be* the current one, and a request for an older
-    version is refused rather than silently sharing whatever is current now.
-    Publishing a different plan than the one somebody pressed share on is a
-    worse failure than refusing.
+
+async def _load_owned_foodchat_plan(request: Request, kind: str, plan_id: str,
+                                    member_id: str):
+    """The member's current daily or weekly plan, if it is the one asked for.
+
+    FoodChat exposes plans as "this member's current plan" rather than by id
+    — there is no fetch-by-id. So the plan asked for has to *be* the current
+    one, and a request for an older version is refused rather than silently
+    sharing whatever is current now. Publishing a different plan than the one
+    somebody pressed share on is a worse failure than refusing.
     """
     from backend.foodchat import FOODCHAT
     from routers.foodchat import verify_member_access
 
-    # Ownership first, and through the same check every other FoodChat route
+    # Ownership first, through the same check every other FoodChat route
     # uses — a share must not be a way around it.
     await verify_member_access(request, member_id)
 
     plans = await FOODCHAT.get_member_current_plans(member_id=member_id)
     result = plans.get("result", plans) if isinstance(plans, dict) else {}
-    weekly = (result or {}).get("weekly_meal_plan")
-    if not weekly:
-        raise NotFoundError(detail="That member has no weekly plan to share")
-    if plan_id and str(weekly.get("id")) != str(plan_id):
+    plan = (result or {}).get(FOODCHAT_KINDS[kind])
+    label = "weekly" if kind == "weekly_meal_plan" else "daily"
+    if not plan:
+        raise NotFoundError(detail=f"That member has no {label} plan to share")
+    if plan_id and str(plan.get("id")) != str(plan_id):
         raise NotFoundError(
-            detail="That weekly plan is no longer the current one; reopen the "
+            detail=f"That {label} plan is no longer the current one; reopen the "
                    "plan and share it again")
 
-    created = weekly.get("created_at")
-    return weekly, f"Weekly meal plan{f' from {str(created)[:10]}' if created else ''}", \
+    created = plan.get("created_at")
+    when = f" from {str(created)[:10]}" if created else ""
+    return plan, f"{label.capitalize()} meal plan{when}", \
         kutils.current_user(request)["sub"]
 
 
@@ -143,12 +148,12 @@ async def api_create_share(request: Request, body: ShareCreate):
     if body.kind not in sharing.KINDS:
         raise NotFoundError(detail=f"Cannot share a {body.kind}")
 
-    if body.kind == "weekly_meal_plan":
+    if body.kind in FOODCHAT_KINDS:
         if not body.member_id:
             raise NotFoundError(
-                detail="Sharing a weekly plan needs the member it belongs to")
-        payload, default_title, user_id = await _load_owned_weekly_plan(
-            request, body.id, body.member_id
+                detail="Sharing a FoodChat plan needs the member it belongs to")
+        payload, default_title, user_id = await _load_owned_foodchat_plan(
+            request, body.kind, body.id, body.member_id
         )
     else:
         payload, default_title, user_id = await _load_owned_plan(

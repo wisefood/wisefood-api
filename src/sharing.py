@@ -48,7 +48,13 @@ MEAL_SLOTS = ("breakfast", "lunch", "dinner")
 
 #: Kinds a token can point at. A closed set so a typo cannot mint a share of
 #: something nobody wrote a scrubber for.
-KINDS = ("meal_plan", "saved_meal_plan", "weekly_meal_plan")
+#: `meal_plan` and `saved_meal_plan` are the gateway's own tables.
+#: `daily_meal_plan` and `weekly_meal_plan` live in FoodChat and are reached
+#: as a member's *current* plan — which is where the plans people actually
+#: make today come from. The gateway's meal_plan table has nine rows, the
+#: newest from February; FoodChat has a hundred and thirty, from this
+#: afternoon. Sharing the wrong one 404'd on every plan anyone could see.
+KINDS = ("meal_plan", "saved_meal_plan", "daily_meal_plan", "weekly_meal_plan")
 
 #: Longest a share may be set to live. Not a limit on usefulness — a link with
 #: no expiry is still allowed — but a cap on what a single call can ask for.
@@ -163,7 +169,7 @@ def scrub_weekly_meal_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
 
 def scrub(kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Scrub by kind. Refuses a kind nobody has written a scrubber for."""
-    if kind in ("meal_plan", "saved_meal_plan"):
+    if kind in ("meal_plan", "saved_meal_plan", "daily_meal_plan"):
         return scrub_meal_plan(payload)
     if kind == "weekly_meal_plan":
         return scrub_weekly_meal_plan(payload)
