@@ -1614,7 +1614,7 @@ class ActivityRecorder:
                         # creates it and every later one refines it.
                         await self._upsert_sessions(db, tables[name], values)
                         continue
-                    await db.execute(insert(tables[name]), values)
+                    await db.execute(insert(tables[name]), _aligned(values))
                     if name == "client_error":
                         # Groups are derived, not reported. Deriving them here
                         # rather than in the browser means a client cannot
@@ -1627,6 +1627,33 @@ class ActivityRecorder:
             if not quiet:
                 logger.warning("analytics.insert_failed: %s", exc)
             return False
+
+
+def _aligned(values):
+    """Every row in a batch given the same keys, missing ones as NULL.
+
+    An executemany binds one compiled statement across every row, so rows
+    with different keys are not a batch it can run: SQLAlchemy stops at *A
+    value is required for bind parameter 'line_no', in parameter group 1*.
+
+    The rows genuinely differ. A JavaScript error reported by the browser
+    carries a line and column; an error the client derives from a failed
+    request — a 500 from the API — has no source position at all. Both are
+    client errors and both belong in the same table.
+
+    Without this the whole batch fails and falls back to inserting row by
+    row. That works, which is why it went unnoticed, but it turns one
+    statement into fourteen and logs an error every time somebody hits a
+    server error with a page open.
+    """
+    if len(values) < 2:
+        return values
+    keys = set()
+    for row in values:
+        keys.update(row)
+    if all(len(row) == len(keys) for row in values):
+        return values
+    return [{k: row.get(k) for k in keys} for row in values]
 
 
 RECORDER = ActivityRecorder()

@@ -927,3 +927,48 @@ class TestSessionIdentityCorrelation:
         source = inspect.getsource(correlate.resolve_identities)
         assert "_RESOLVE_SESSIONS" in source
         assert 'filled["client_session"]' in source
+
+
+class TestABatchWithRaggedRows:
+    """Rows in one batch must share their keys, or none of them insert.
+
+    An executemany binds one compiled statement across every row, so
+    SQLAlchemy stops at *A value is required for bind parameter 'line_no', in
+    parameter group 1*. The rows genuinely differ: a JavaScript error
+    reported by the browser carries a line and column, while an error the
+    client derives from a failed request — a 500 from the API — has no source
+    position at all. Both are client errors and both belong in the table.
+    """
+
+    def test_missing_keys_are_filled_with_null(self):
+        from analytics.recorder import _aligned
+
+        out = _aligned([
+            {"message": "boom", "line_no": 12, "col_no": 4},
+            {"message": "POST /api/v1/shares", "handled": False},
+        ])
+        assert all(set(row) == {"message", "line_no", "col_no", "handled"}
+                   for row in out)
+        assert out[1]["line_no"] is None and out[1]["col_no"] is None
+        # Nothing that was there is lost or changed.
+        assert out[0]["line_no"] == 12
+        assert out[1]["message"] == "POST /api/v1/shares"
+        assert out[1]["handled"] is False
+
+    def test_rows_that_already_match_are_passed_straight_through(self):
+        from analytics.recorder import _aligned
+
+        values = [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+        assert _aligned(values) is values
+
+    def test_a_single_row_is_passed_through(self):
+        from analytics.recorder import _aligned
+
+        values = [{"a": 1}]
+        assert _aligned(values) is values
+
+    def test_an_explicit_none_is_not_confused_with_an_absent_key(self):
+        from analytics.recorder import _aligned
+
+        out = _aligned([{"a": 1, "b": None}, {"a": 2, "b": 3}])
+        assert out[0]["b"] is None and out[1]["b"] == 3
