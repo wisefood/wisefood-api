@@ -48,7 +48,7 @@ MEAL_SLOTS = ("breakfast", "lunch", "dinner")
 
 #: Kinds a token can point at. A closed set so a typo cannot mint a share of
 #: something nobody wrote a scrubber for.
-KINDS = ("meal_plan", "saved_meal_plan")
+KINDS = ("meal_plan", "saved_meal_plan", "weekly_meal_plan")
 
 #: Longest a share may be set to live. Not a limit on usefulness — a link with
 #: no expiry is still allowed — but a cap on what a single call can ask for.
@@ -107,10 +107,66 @@ def scrub_meal_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+#: Weekly entry fields that describe the slot rather than the household.
+WEEKLY_ENTRY_FIELDS = ("day", "meal_type", "meal_idx")
+
+
+def scrub_weekly_meal_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """The shareable half of a weekly plan.
+
+    Same rule as the daily scrubber and a different shape: a week is a flat
+    list of entries keyed by day and slot, not three named fields. Grouped
+    here into days so a reader gets a week rather than a list to sort.
+
+    Dropped for the same reasons as the daily one, and one more that matters
+    on this shape: a weekly plan's `constraints_applied` rows are *measured*
+    and carry statuses like "relaxed" and "violated" against named
+    constraints — which is a per-household account of whose needs the planner
+    could not meet. That is the last thing to publish under a link anyone can
+    open.
+    """
+    if not isinstance(plan, dict):
+        return {"days": []}
+
+    by_day: Dict[int, Dict[str, Any]] = {}
+    for entry in plan.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            day = int(entry.get("day"))
+        except (TypeError, ValueError):
+            continue
+        slot = str(entry.get("meal_type") or "").strip()
+        dish = _clean_meal(entry.get("recipe"))
+        if not slot or not dish:
+            continue
+        bucket = by_day.setdefault(day, {"day": day, "meals": {}})
+        bucket["meals"].setdefault(slot, []).append(dish)
+
+    summaries = plan.get("day_summaries")
+    if isinstance(summaries, dict):
+        for key, headline in summaries.items():
+            try:
+                day = int(key)
+            except (TypeError, ValueError):
+                continue
+            if day in by_day and isinstance(headline, str):
+                # A headline describes the food ("dinner with fish"), which is
+                # why it survives where `reasoning` does not.
+                by_day[day]["summary"] = headline[:200]
+
+    out: Dict[str, Any] = {"days": [by_day[d] for d in sorted(by_day)]}
+    if plan.get("created_at"):
+        out["date"] = str(plan["created_at"])
+    return out
+
+
 def scrub(kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Scrub by kind. Refuses a kind nobody has written a scrubber for."""
     if kind in ("meal_plan", "saved_meal_plan"):
         return scrub_meal_plan(payload)
+    if kind == "weekly_meal_plan":
+        return scrub_weekly_meal_plan(payload)
     raise ValueError(f"No scrubber for share kind {kind!r}")
 
 

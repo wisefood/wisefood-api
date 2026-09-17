@@ -185,6 +185,21 @@ def _slot_html(slot: str, dishes: Any) -> str:
     )
 
 
+def _flatten_week(days: Any) -> Dict[str, Any]:
+    """A week reduced to one set of slots, for the mail body.
+
+    Takes the first day that has food rather than merging all of them: merged
+    days would read as one enormous day, which is worse than showing a taste
+    and linking to the rest.
+    """
+    if not isinstance(days, list):
+        return {}
+    for day in days:
+        if isinstance(day, dict) and day.get("meals"):
+            return day["meals"]
+    return {}
+
+
 def render_meal_plan(
     *,
     member_name: str,
@@ -199,8 +214,13 @@ def render_meal_plan(
     arrives as a heap. `payload` is the scrubbed share payload, so there is
     nothing here to leak.
     """
-    meals = (payload or {}).get("meals") or {}
-    date = (payload or {}).get("date")
+    payload = payload or {}
+    date = payload.get("date")
+    # A weekly share carries `days`, a daily one carries `meals`. Flattened to
+    # the daily shape rather than given its own template: an email is read on
+    # a phone, and seven days of cards is not a thing anybody scrolls. The
+    # link goes to the full week.
+    meals = payload.get("meals") or _flatten_week(payload.get("days"))
 
     intro = (
         f"{html.escape(from_name)} shared a meal plan with you."

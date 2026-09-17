@@ -193,3 +193,95 @@ class TestTheMail:
         assert [mailer.within_quota("u1") for _ in range(4)] == [True, True, True, False]
         # One account's sending does not spend another's.
         assert mailer.within_quota("u2") is True
+
+
+# ------------------------------------------------------- weekly plans --
+
+class TestScrubbingAWeeklyPlan:
+    """A week is a flat list of entries, not three named slots.
+
+    Same rule as the daily scrubber — publish the food, nothing about the
+    household — and one extra concern this shape brings with it: a weekly
+    plan's `constraints_applied` rows are *measured*, with statuses like
+    "relaxed" and "violated" against named constraints. That is a per-household
+    account of whose needs the planner could not meet, and it must not travel
+    with a link anyone can open.
+    """
+
+    PLAN = {
+        "id": "wp-1",
+        "created_at": "2026-09-17T13:08:01Z",
+        "version": 4,
+        "parent_id": "wp-0",
+        "entries": [
+            {"day": 4, "meal_type": "dinner", "meal_idx": 0, "recipe": {
+                "title": "Baked cod", "ingredients": "cod, lemon",
+                "directions": "Bake.", "role": "main",
+                "household_id": "hh-7", "member_id": "m-3",
+                "match_reasons": ["low sodium for Maria"],
+                "reasoning": "Maria has hypertension",
+            }},
+            {"day": 4, "meal_type": "dinner", "meal_idx": 1, "recipe": {
+                "title": "Buttered greens", "role": "side"}},
+            {"day": 1, "meal_type": "breakfast", "meal_idx": 0, "recipe": {
+                "title": "Porridge"}},
+        ],
+        "day_summaries": {1: "light start", 4: "dinner with fish"},
+        "constraints_applied": [
+            {"constraint": "low sodium", "status": "violated", "source": "Maria"},
+        ],
+        "reasoning": "Built around Maria's blood pressure and Tom's allergy.",
+    }
+
+    def scrub(self):
+        import sharing
+        return sharing.scrub("weekly_meal_plan", self.PLAN)
+
+    def test_the_week_is_grouped_into_days_in_order(self):
+        out = self.scrub()
+        assert [d["day"] for d in out["days"]] == [1, 4]
+
+    def test_several_dishes_in_one_slot_are_kept(self):
+        """A dinner with a side is two entries on the same slot, and dropping
+        either would publish half a meal."""
+        thursday = next(d for d in self.scrub()["days"] if d["day"] == 4)
+        titles = [dish["title"] for dish in thursday["meals"]["dinner"]]
+        assert titles == ["Baked cod", "Buttered greens"]
+
+    def test_day_headlines_survive_because_they_describe_food(self):
+        thursday = next(d for d in self.scrub()["days"] if d["day"] == 4)
+        assert thursday["summary"] == "dinner with fish"
+
+    def test_nothing_about_the_household_travels(self):
+        import json
+        blob = json.dumps(self.scrub())
+        for leak in ("hh-7", "m-3", "Maria", "hypertension", "low sodium",
+                     "violated", "match_reasons", "constraints_applied",
+                     "reasoning", "wp-1", "wp-0"):
+            assert leak not in blob, f"{leak!r} reached the shared payload"
+
+    def test_a_weekly_plan_is_a_kind_that_can_be_shared(self):
+        import sharing
+        assert "weekly_meal_plan" in sharing.KINDS
+
+    def test_an_entry_with_no_recipe_or_slot_is_skipped(self):
+        import sharing
+        out = sharing.scrub("weekly_meal_plan", {"entries": [
+            {"day": 2, "meal_type": "lunch"},
+            {"day": 2, "recipe": {"title": "Orphan"}},
+            {"day": 2, "meal_type": "lunch", "recipe": {"title": "Soup"}},
+        ]})
+        assert out["days"] == [{"day": 2, "meals": {"lunch": [{"title": "Soup"}]}}]
+
+    def test_junk_does_not_raise(self):
+        import sharing
+        assert sharing.scrub("weekly_meal_plan", {}) == {"days": []}
+        assert sharing.scrub("weekly_meal_plan", {"entries": "nope"}) == {"days": []}
+
+    def test_an_unknown_kind_is_still_refused(self):
+        """The closed set is what stops a typo minting a share of something
+        nobody wrote a scrubber for."""
+        import sharing
+        import pytest as _pytest
+        with _pytest.raises(ValueError, match="No scrubber"):
+            sharing.scrub("shopping_list", {})
