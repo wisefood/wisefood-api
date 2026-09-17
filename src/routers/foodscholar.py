@@ -842,6 +842,43 @@ async def integrator_integrate(request: Request, proposal_id: str,
         delegated_token=_integrator_token(request))
 
 
+@router.post("/integrator/sessions/{session_id}/chat/stream",
+             dependencies=[Depends(auth("admin,expert"))])
+async def integrator_chat_stream(request: Request, session_id: str,
+                                 body: IntegratorChatBody):
+    """The turn, streamed. Steps arrive as they happen rather than at the end.
+
+    Not wrapped in `@render()`: this is `text/event-stream`, and there is no
+    JSON envelope to build. Primed like the QA stream so an upstream failure
+    surfaces as a normal error response rather than as a dead 200.
+    """
+    upstream = FOODSCHOLAR.integrator_chat_stream(
+        session_id,
+        {"user_sub": _integrator_sub(request), "message": body.message},
+        delegated_token=_integrator_token(request),
+    )
+    try:
+        first_chunk = await upstream.__anext__()
+    except StopAsyncIteration:
+        first_chunk = b""
+
+    async def frames():
+        if first_chunk:
+            yield first_chunk
+        async for chunk in upstream:
+            yield chunk
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/integrator/runs/{run_id}", dependencies=[Depends(auth("admin,expert"))])
 @render()
 async def integrator_run(request: Request, run_id: str):

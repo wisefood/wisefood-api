@@ -366,6 +366,30 @@ class FoodScholar:
             headers=_delegated(delegated_token))
 
     @classmethod
+    async def integrator_chat_stream(cls, session_id: str, payload: dict,
+                                     delegated_token: str | None = None):
+        """Proxy the integrator's streamed turn as raw SSE bytes.
+
+        Chunk-for-chunk with no reframing, exactly as the QA stream is
+        proxied. The read timeout is generous because a turn can spend a
+        minute inside one web search; the upstream's keep-alive comments are
+        what stop that looking like a dead connection.
+        """
+        client = cls._require_client()
+        timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+        headers = {**cls._headers(), **(_delegated(delegated_token) or {})}
+        async with client.stream(
+            "POST",
+            f"/api/v1/integrator/sessions/{session_id}/chat/stream",
+            json=payload,
+            timeout=timeout,
+            headers=headers,
+        ) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                yield chunk
+
+    @classmethod
     async def integrator_run(cls, run_id: str):
         return await cls.get(f"/api/v1/integrator/runs/{run_id}")
 
