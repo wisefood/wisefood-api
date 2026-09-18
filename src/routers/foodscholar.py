@@ -926,3 +926,218 @@ async def integrator_audit(request: Request, session_id: Optional[str] = None,
     if proposal_id:
         params["proposal_id"] = proposal_id
     return await FOODSCHOLAR.integrator_audit(params)
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge graph browsing
+#
+# FoodScholar serves the graph from a denormalized browse index; this is a
+# straight proxy in front of it. Three things are decided here rather than
+# upstream, because they are the gateway's job and not the graph's:
+#
+#   who may look      Reads take a plain `auth()`: the graph is the corpus's
+#                     table of contents, it carries no household or member
+#                     data, and a guest who may ask a question may certainly
+#                     see what the answer was drawn from. No guest_budget —
+#                     these are Elasticsearch reads with no model behind them,
+#                     so the thing budgets exist to ration is not being spent.
+#
+#   who may rebuild   Reindex is admin only. It reads the whole graph and
+#                     rewrites an index.
+#
+#   which filters     Query parameters are forwarded verbatim. The filter
+#                     vocabulary belongs to FoodScholar, which validates it and
+#                     returns a readable 400; restating it here would mean
+#                     every new filter needs two edits and silently does
+#                     nothing after one.
+# --------------------------------------------------------------------------- #
+
+
+def _graph_params(request: Request) -> dict:
+    """Query parameters as sent, minus the blanks.
+
+    `multi_dict` flattening is deliberate: every graph filter is either single
+    valued or comma-separated, so a repeated parameter is a client bug rather
+    than a list, and taking the last one is the same thing FastAPI would do.
+    """
+    return {k: v for k, v in request.query_params.items() if v not in (None, "")}
+
+
+@router.get("/graph/summary", dependencies=[Depends(auth())])
+@render()
+async def graph_summary(request: Request):
+    """Size, facets and which build is being served.
+
+    `built: false` is the honest answer before the projector has ever run, and
+    the interface is expected to render it rather than treat it as an error.
+    """
+    return await FOODSCHOLAR.graph_summary()
+
+
+@router.get("/graph/facets", dependencies=[Depends(auth())])
+@render()
+async def graph_facets(request: Request):
+    """The Layer A facets, with how much of the graph sits in each."""
+    return await FOODSCHOLAR.graph_facets()
+
+
+@router.get("/graph/facets/{facet}/roots", dependencies=[Depends(auth())])
+@render()
+async def graph_facet_roots(request: Request, facet: str):
+    """Top-level shelves of one facet — where a browse session starts."""
+    return await FOODSCHOLAR.graph_facet_roots(facet, _graph_params(request))
+
+
+@router.get("/graph/search", dependencies=[Depends(auth())])
+@render()
+async def graph_search(request: Request):
+    """Search and filter the graph, with the filter panel's counts included."""
+    return await FOODSCHOLAR.graph_search(_graph_params(request))
+
+
+@router.get("/graph/suggest", dependencies=[Depends(auth())])
+@render()
+async def graph_suggest(request: Request):
+    """Autocomplete over node labels."""
+    return await FOODSCHOLAR.graph_suggest(_graph_params(request))
+
+
+@router.get("/graph/filters", dependencies=[Depends(auth())])
+@render()
+async def graph_filters(request: Request):
+    """Counts for the filter panel, scoped to the filters already applied."""
+    return await FOODSCHOLAR.graph_filters(_graph_params(request))
+
+
+@router.get("/graph/entities", dependencies=[Depends(auth())])
+@render()
+async def graph_entities(request: Request):
+    """The linked ontology entities behind the corpus."""
+    return await FOODSCHOLAR.graph_entities(_graph_params(request))
+
+
+@router.get("/graph/entities/{ontology_id}", dependencies=[Depends(auth())])
+@render()
+async def graph_entity(request: Request, ontology_id: str):
+    """One ontology entity."""
+    return await FOODSCHOLAR.graph_entity(ontology_id)
+
+
+@router.get("/graph/entities/{ontology_id}/chunks", dependencies=[Depends(auth())])
+@render()
+async def graph_entity_chunks(request: Request, ontology_id: str):
+    """Passages that mention an entity."""
+    return await FOODSCHOLAR.graph_entity_chunks(ontology_id, _graph_params(request))
+
+
+@router.get("/graph/cards/{target_id}", dependencies=[Depends(auth())])
+@render()
+async def graph_card(request: Request, target_id: str):
+    """The Layer C card describing a shelf or theme."""
+    return await FOODSCHOLAR.graph_card(target_id)
+
+
+# The node routes come after the static ones on purpose. `/graph/nodes/{id}`
+# cannot swallow `/graph/search`, but ordering them this way keeps the file
+# readable in the order a reader hits the paths.
+
+
+@router.get("/graph/nodes/{node_id}", dependencies=[Depends(auth())])
+@render()
+async def graph_node(request: Request, node_id: str):
+    """One node with everything its detail page needs, in one response."""
+    return await FOODSCHOLAR.graph_node(node_id)
+
+
+@router.get("/graph/nodes/{node_id}/children", dependencies=[Depends(auth())])
+@render()
+async def graph_node_children(request: Request, node_id: str):
+    """Child shelves of a shelf."""
+    return await FOODSCHOLAR.graph_node_children(node_id, _graph_params(request))
+
+
+@router.get("/graph/nodes/{node_id}/themes", dependencies=[Depends(auth())])
+@render()
+async def graph_node_themes(request: Request, node_id: str):
+    """Themes discovered on a shelf."""
+    return await FOODSCHOLAR.graph_node_themes(node_id, _graph_params(request))
+
+
+@router.get("/graph/nodes/{node_id}/breadcrumb", dependencies=[Depends(auth())])
+@render()
+async def graph_node_breadcrumb(request: Request, node_id: str):
+    """Ancestors of a node, root first."""
+    return await FOODSCHOLAR.graph_node_breadcrumb(node_id)
+
+
+@router.get("/graph/nodes/{node_id}/chunks", dependencies=[Depends(auth())])
+@render()
+async def graph_node_chunks(request: Request, node_id: str):
+    """Evidence passages attached to a shelf or theme."""
+    return await FOODSCHOLAR.graph_node_chunks(node_id, _graph_params(request))
+
+
+# ------------------------------------------------------------------ streams --
+
+
+async def _graph_sse(path: str, params: dict) -> StreamingResponse:
+    """Proxy one graph stream, primed so a dead upstream is not a dead 200.
+
+    Same shape as the QA and integrator streams: pull the first chunk before
+    returning, so an upstream connection failure or 4xx surfaces as a normal
+    error response instead of a stream that opens and then says nothing.
+    """
+    upstream = FOODSCHOLAR.graph_stream(path, params)
+    try:
+        first_chunk = await upstream.__anext__()
+    except StopAsyncIteration:
+        first_chunk = b""
+
+    async def frames():
+        if first_chunk:
+            yield first_chunk
+        async for chunk in upstream:
+            yield chunk
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Without this an nginx-style ingress buffers the whole stream and
+            # the progressive draw the endpoint exists for never happens.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/graph/stream", dependencies=[Depends(auth())])
+async def graph_stream(request: Request):
+    """Stream the filtered graph as SSE, for drawing.
+
+    Not wrapped in `@render()`: this is `text/event-stream` and there is no
+    JSON envelope to build. Frames pass through untouched.
+    """
+    return await _graph_sse("/api/v1/graph/stream", _graph_params(request))
+
+
+@router.get("/graph/stream/expand", dependencies=[Depends(auth())])
+async def graph_stream_expand(request: Request):
+    """Stream one node's neighborhood — parent, children, themes, card."""
+    return await _graph_sse("/api/v1/graph/stream/expand", _graph_params(request))
+
+
+# ------------------------------------------------------------------- admin --
+
+
+@router.post("/graph/reindex", dependencies=[Depends(auth("admin"))])
+@render()
+async def graph_reindex(request: Request, drop_old: bool = True):
+    """Rebuild the browse index from the graph.
+
+    Admin only, and slow: it reads the whole graph. Until it runs after an
+    offline build, the browse routes keep serving the previous projection,
+    which is the behaviour you want — a stale graph beats no graph.
+    """
+    return await FOODSCHOLAR.graph_reindex({"drop_old": drop_old})

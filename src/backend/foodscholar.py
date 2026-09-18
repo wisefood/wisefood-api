@@ -504,5 +504,138 @@ class FoodScholar:
             params={"require_verified": require_verified, "dry_run": dry_run},
         )
 
+    # ------------------------------------------------------------------ #
+    # Knowledge graph browsing
+    #
+    # Read-only, and every route is a pass-through. The filter vocabulary
+    # (kind, facet, status, under, depth_max, min_chunks, discovered_by,
+    # evidence_quality, has_card, q, limit, cursor) lives upstream and is
+    # forwarded verbatim rather than re-declared here: FoodScholar validates
+    # it and owns the contract, and a gateway that restates ten query
+    # parameters is a gateway that silently drops the eleventh one somebody
+    # adds. Paths stay closed — nothing here interpolates a caller-supplied
+    # segment except the ids, which are quoted.
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    async def graph_summary(cls):
+        return await cls.get("/api/v1/graph/summary")
+
+    @classmethod
+    async def graph_facets(cls):
+        return await cls.get("/api/v1/graph/facets")
+
+    @classmethod
+    async def graph_facet_roots(cls, facet: str, params: Optional[Dict[str, Any]] = None):
+        return await cls.get(
+            f"/api/v1/graph/facets/{quote(str(facet), safe='')}/roots", params=params
+        )
+
+    @classmethod
+    async def graph_node(cls, node_id: str):
+        return await cls.get(f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}")
+
+    @classmethod
+    async def graph_node_children(cls, node_id: str, params: Optional[Dict[str, Any]] = None):
+        return await cls.get(
+            f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/children", params=params
+        )
+
+    @classmethod
+    async def graph_node_themes(cls, node_id: str, params: Optional[Dict[str, Any]] = None):
+        return await cls.get(
+            f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/themes", params=params
+        )
+
+    @classmethod
+    async def graph_node_breadcrumb(cls, node_id: str):
+        return await cls.get(
+            f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/breadcrumb"
+        )
+
+    @classmethod
+    async def graph_node_chunks(cls, node_id: str, params: Optional[Dict[str, Any]] = None):
+        return await cls.get(
+            f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/chunks", params=params
+        )
+
+    @classmethod
+    async def graph_card(cls, target_id: str):
+        return await cls.get(f"/api/v1/graph/cards/{quote(str(target_id), safe='')}")
+
+    @classmethod
+    async def graph_search(cls, params: Optional[Dict[str, Any]] = None):
+        return await cls.get("/api/v1/graph/search", params=params)
+
+    @classmethod
+    async def graph_suggest(cls, params: Optional[Dict[str, Any]] = None):
+        return await cls.get("/api/v1/graph/suggest", params=params)
+
+    @classmethod
+    async def graph_filters(cls, params: Optional[Dict[str, Any]] = None):
+        return await cls.get("/api/v1/graph/filters", params=params)
+
+    @classmethod
+    async def graph_entities(cls, params: Optional[Dict[str, Any]] = None):
+        return await cls.get("/api/v1/graph/entities", params=params)
+
+    @classmethod
+    async def graph_entity(cls, ontology_id: str):
+        return await cls.get(
+            f"/api/v1/graph/entities/{quote(str(ontology_id), safe='')}"
+        )
+
+    @classmethod
+    async def graph_entity_chunks(
+        cls, ontology_id: str, params: Optional[Dict[str, Any]] = None
+    ):
+        return await cls.get(
+            f"/api/v1/graph/entities/{quote(str(ontology_id), safe='')}/chunks",
+            params=params,
+        )
+
+    @classmethod
+    async def graph_reindex(cls, params: Optional[Dict[str, Any]] = None):
+        """Rebuild the browse index. Slow by nature — it reads the whole graph.
+
+        The pooled client's 15 s timeout is nowhere near enough, so this call
+        gets its own. Upstream holds a lock, so a second caller gets a conflict
+        rather than a second pass over Neo4j.
+        """
+        response = await cls._request(
+            "POST",
+            "/api/v1/graph/reindex",
+            params=params,
+            timeout=httpx.Timeout(connect=10.0, read=1800.0, write=30.0, pool=10.0),
+        )
+        return response.json()
+
+    @classmethod
+    async def graph_stream(cls, path: str, params: Optional[Dict[str, Any]] = None):
+        """Proxy a graph SSE stream as raw bytes, chunk for chunk.
+
+        `path` is chosen by the router from a fixed set, never by a caller.
+
+        The read timeout is generous for the same reason the QA stream's is: a
+        wide slice of the graph is many Elasticsearch pages, and the upstream's
+        keep-alive comments are what stop a quiet stretch looking like a dead
+        connection. Nothing is reframed — `meta`, `nodes`, `edges`, `progress`
+        and the terminal `done`/`error` reach the browser exactly as sent, seq
+        numbers intact, which is what lets a client detect a gap.
+        """
+        client = cls._require_client()
+        timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+        async with client.stream(
+            "GET",
+            path,
+            params=params,
+            timeout=timeout,
+            headers=cls._headers({"Accept": "text/event-stream"}),
+        ) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                yield chunk
+
+
 
 FOODSCHOLAR = FoodScholar.get_client()
