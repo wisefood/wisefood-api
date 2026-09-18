@@ -1862,6 +1862,18 @@ CLIENT_EVENT_TYPES = frozenset(
         "favorite.remove",
         "catalog.view",
         "console.view",
+        # Knowledge graph browsing. Five, and no more: what someone opened,
+        # what they expanded, what they narrowed to, what they searched for,
+        # and the moment the graph handed a question to Question Answering —
+        # which is the one that says whether the two tabs are one product or
+        # two things on the same page. Node ids are recorded, labels are not:
+        # an id is a graph coordinate, a label is closer to what the person was
+        # reading.
+        "graph.select",
+        "graph.expand",
+        "graph.scope",
+        "graph.search",
+        "graph.ask_bridge",
     }
 )
 

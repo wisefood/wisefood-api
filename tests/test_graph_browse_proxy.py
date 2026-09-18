@@ -236,3 +236,33 @@ def test_the_stream_response_disables_proxy_buffering():
     assert response.media_type == "text/event-stream"
     assert response.headers.get("x-accel-buffering") == "no"
     assert response.headers.get("cache-control") == "no-cache"
+
+
+# ── telemetry ─────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("event_type", [
+    "graph.select", "graph.expand", "graph.scope", "graph.search",
+    "graph.ask_bridge",
+])
+def test_the_graph_events_are_accepted(event_type):
+    """The allowlist is the thing that actually decides.
+
+    A browser event type missing from CLIENT_EVENT_TYPES is a 422, and the
+    whole batch it travelled in is rejected with it — so the graph tab would
+    have silently lost its telemetry AND the page-view events batched
+    alongside. The UI mirrors this list in services/analyticsApi.ts, where it
+    is only a type: this is the copy with teeth.
+    """
+    from schemas import ActivityEventIn
+
+    assert ActivityEventIn(type=event_type).type == event_type
+
+
+def test_an_invented_graph_event_is_still_refused():
+    """The allowlist exists because event_type is an indexed column and the
+    console filters on it. Adding five is not opening it."""
+    from pydantic import ValidationError
+    from schemas import ActivityEventIn
+
+    with pytest.raises(ValidationError):
+        ActivityEventIn(type="graph.whatever")
