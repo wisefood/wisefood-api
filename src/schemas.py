@@ -722,6 +722,25 @@ class IngredientProfile(BaseModel):
     contribution: Optional[float] = None
 
 
+class RecipeScaleRequest(BaseModel):
+    """Request payload for rewriting measurements to a different serving count.
+
+    Proxied straight through; no LLM and no catalog read upstream, which is
+    why this carries no guest budget.
+    """
+    measurements: List[str] = Field(
+        ...,
+        max_length=200,
+        description="Measurement strings in recipe order, e.g. ['2 cups', '1 tbsp']",
+    )
+    from_serves: float = Field(
+        ..., gt=0, le=1000, description="Serving count the measurements are written for"
+    )
+    to_serves: float = Field(
+        ..., gt=0, le=1000, description="Serving count to rewrite them for"
+    )
+
+
 class RecipeProfileRequest(BaseModel):
     """Request payload for recipe profiling endpoint"""
     raw_recipe: str = Field(..., min_length=1, description="Unstructured recipe text to analyze")

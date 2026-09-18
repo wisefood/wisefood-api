@@ -14,6 +14,7 @@ from schemas import (
     RecipeAdaptSuggestionsRequest,
     RecipeAdaptSuggestionsResponse,
     RecipeProfileRequest,
+    RecipeScaleRequest,
     RecipeSearchRequest,
     RecipeParamSearchRequest,
     RecipeBulkStatusRequest,
@@ -298,6 +299,25 @@ async def recipe_details_batch(payload: RecipeDetailsBatchRequest, request: Requ
     return await RECIPEWRANGLER.recipe_details_batch(
         recipe_ids=payload.recipe_ids,
         region=payload.region,
+    )
+
+
+@router.post(
+    "/recipes/scale",
+    dependencies=[Depends(auth())],
+)
+@render()
+async def scale_recipe(payload: RecipeScaleRequest, request: Request):
+    """Rewrite a recipe's measurements for a different serving count.
+
+    No guest budget: upstream this is string arithmetic with no model call and
+    no catalog read, and it sits behind a serving stepper a member may click
+    several times in a row.
+    """
+    return await RECIPEWRANGLER.scale_recipe(
+        measurements=payload.measurements,
+        from_serves=payload.from_serves,
+        to_serves=payload.to_serves,
     )
 
 

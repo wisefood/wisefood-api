@@ -1394,6 +1394,11 @@ async def user_activity(
             ]
         )
 
+        # Time is read from the same events, in one pass, rather than a
+        # query per row: the table shows fifty people and the window
+        # functions cost the same for all of them as for one.
+        attention = await time_on_app(db, since, window.until)
+
     from analytics.people import resolve_people
 
     # One page's worth of names. Bounded by the page size and cached, so the
@@ -1406,6 +1411,16 @@ async def user_activity(
         "total": int(total or 0),
         "offset": start,
         "limit": size,
+        # Said once, here, so every surface showing these numbers can repeat
+        # the same caveat instead of inventing its own.
+        "time_basis": {
+            "estimated": True,
+            "idle_gap_minutes": IDLE_GAP_MINUTES,
+            "tail_seconds": VISIT_TAIL_SECONDS,
+            "note": ("time is read from event timestamps, not from when a tab "
+                     "was open: a visit ends after "
+                     f"{IDLE_GAP_MINUTES} minutes of silence"),
+        },
         "users": [
             {
                 "user_id": user_id,
@@ -1418,6 +1433,11 @@ async def user_activity(
                 "sessions": int(sessions or 0),
                 "first_seen": first.isoformat() if first else None,
                 "last_seen": last.isoformat() if last else None,
+                # Estimated, and named so: derived from event timestamps
+                # rather than measured, because nothing records a closed tab.
+                "seconds_active": attention.get(user_id or "", {}).get("seconds", 0),
+                "visits": attention.get(user_id or "", {}).get("visits", 0),
+                "time_by_app": attention.get(user_id or "", {}).get("by_app", {}),
                 "questions_asked": int(questions or 0),
                 "chat_turns": int(turns or 0),
                 "recipes_viewed": int(viewed or 0),
@@ -2062,6 +2082,89 @@ class _Window:
         if key == "until":
             return self.until.isoformat()
         raise KeyError(key)
+
+
+#: How long a pause before somebody is taken to have stopped using an app.
+#: Thirty minutes is the convention analytics tools settled on, and the
+#: number matters less than saying it out loud: the figure is derived from
+#: timestamps, so it depends entirely on where the visits are cut.
+IDLE_GAP_MINUTES = 30
+
+#: Credited to a visit for the time after its last event. Without it a visit
+#: of one event lasts zero seconds, and somebody who opened a page and read
+#: it for five minutes would show as having spent no time at all.
+VISIT_TAIL_SECONDS = 30
+
+#: Reading a visit out of event timestamps. Events are ordered per person per
+#: app; a gap longer than the idle threshold starts a new visit; a visit
+#: lasts from its first event to its last.
+_TIME_ON_APP_SQL = """
+WITH ordered AS (
+    SELECT user_id, app, occurred_at,
+           LAG(occurred_at) OVER (
+               PARTITION BY user_id, app ORDER BY occurred_at) AS previous
+    FROM analytics.event
+    WHERE user_id IS NOT NULL
+      AND occurred_at >= :since
+      AND (:until IS NULL OR occurred_at < :until)
+), marked AS (
+    SELECT user_id, app, occurred_at,
+           CASE WHEN previous IS NULL
+                     OR occurred_at - previous > make_interval(mins => :gap)
+                THEN 1 ELSE 0 END AS starts_visit
+    FROM ordered
+), visits AS (
+    SELECT user_id, app, occurred_at,
+           SUM(starts_visit) OVER (
+               PARTITION BY user_id, app ORDER BY occurred_at) AS visit
+    FROM marked
+), spans AS (
+    SELECT user_id, app, visit,
+           EXTRACT(EPOCH FROM (MAX(occurred_at) - MIN(occurred_at))) AS seconds
+    FROM visits GROUP BY user_id, app, visit
+)
+SELECT user_id, app,
+       SUM(seconds) + COUNT(*) * :tail AS seconds,
+       COUNT(*) AS visits
+FROM spans GROUP BY user_id, app
+"""
+
+
+async def time_on_app(
+    db, since: datetime, until: Optional[datetime] = None
+) -> Dict[str, Dict[str, Any]]:
+    """Estimated time each person spent in each app.
+
+    Derived, and worth saying so wherever it is shown: nothing records when
+    somebody closes a tab, so this reads visits out of the events they
+    produced. A visit runs from its first event to its last, ends after
+    `IDLE_GAP_MINUTES` of silence, and is credited a little tail for the
+    reading somebody does after their last click.
+
+    It therefore undercounts time spent reading one page and overcounts a tab
+    left open beside an active one. It is an estimate of attention, not a
+    measurement of presence.
+    """
+    from sqlalchemy import text
+
+    rows = (
+        await db.execute(
+            text(_TIME_ON_APP_SQL),
+            {"since": since, "until": until,
+             "gap": IDLE_GAP_MINUTES, "tail": VISIT_TAIL_SECONDS},
+        )
+    ).all()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
+    for user_id, app, seconds, visits in rows:
+        entry = per_user.setdefault(
+            user_id, {"seconds": 0, "visits": 0, "by_app": {}})
+        seconds = int(seconds or 0)
+        entry["by_app"][app or "unknown"] = {
+            "seconds": seconds, "visits": int(visits or 0)}
+        entry["seconds"] += seconds
+        entry["visits"] += int(visits or 0)
+    return per_user
 
 
 def _window(

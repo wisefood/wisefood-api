@@ -326,6 +326,23 @@ class RecipeWrangler:
         return await cls.post("/api/v1/recipes/profile", json=payload)
 
     @classmethod
+    async def scale_recipe(
+        cls,
+        measurements: list,
+        from_serves: float,
+        to_serves: float,
+    ):
+        """Rewrite measurements for a different serving count."""
+        return await cls.post(
+            "/api/v1/recipes/scale",
+            json={
+                "measurements": measurements,
+                "from_serves": from_serves,
+                "to_serves": to_serves,
+            },
+        )
+
+    @classmethod
     async def recipe_details_batch(
         cls,
         recipe_ids: list[str],
