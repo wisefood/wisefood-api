@@ -103,3 +103,57 @@ class TestTimeOnApp:
                 return Result()
 
         assert await time_on_app(DB(), since=None) == {}
+
+
+class TestRawSqlBindsCarryTheirTypes:
+    """Why the report returned 500 in production while its tests passed.
+
+    SQLAlchemy Core emits `$1::TIMESTAMP WITH TIME ZONE` for every bind it
+    builds. A raw `text()` emits a bare `$1`, and asyncpg prepares statements
+    before running them — so a parameter that appears only in `IS NULL` and a
+    comparison gives Postgres nothing to infer from, and the whole query is
+    refused with `could not determine data type of parameter $2`.
+
+    The unit tests below this one mock the database, so they never see it. A
+    psql check does not either, because pasting a literal into a query is not
+    passing a parameter to a prepared statement. This is the check that would
+    have caught it, and it needs no database to run.
+    """
+
+    def _binds(self, sql: str):
+        import re
+
+        # `:name` that is not `::cast` and not inside a `=>` named argument.
+        return set(re.findall(r"(?<!:):([a-z_][a-z0-9_]*)", sql))
+
+    def test_every_parameter_is_cast(self):
+        import re
+
+        from analytics.reports import _TIME_ON_APP_SQL
+
+        for name in self._binds(_TIME_ON_APP_SQL):
+            assert re.search(rf"CAST\(\s*:{name}\s+AS\s+\w+", _TIME_ON_APP_SQL), (
+                f":{name} is passed to asyncpg with no type to infer from")
+
+    def test_the_nullable_bound_is_the_one_that_mattered(self):
+        """`:until` is None whenever a caller asked for a day count rather
+        than a range, which is the default and therefore every page load."""
+        from analytics.reports import _TIME_ON_APP_SQL
+
+        assert "CAST(:until AS timestamptz) IS NULL" in _TIME_ON_APP_SQL
+
+    def test_no_raw_sql_in_this_module_leaves_a_bind_uncast(self):
+        """Applies to whatever raw SQL gets added next, not only to this one."""
+        import re
+
+        import analytics.reports as reports
+
+        for name in dir(reports):
+            if not name.endswith("_SQL"):
+                continue
+            sql = getattr(reports, name)
+            if not isinstance(sql, str):
+                continue
+            for bind in self._binds(sql):
+                assert re.search(rf"CAST\(\s*:{bind}\s+AS\s+\w+", sql), (
+                    f"{name}: :{bind} has no cast")

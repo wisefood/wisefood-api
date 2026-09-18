@@ -2098,6 +2098,12 @@ VISIT_TAIL_SECONDS = 30
 #: Reading a visit out of event timestamps. Events are ordered per person per
 #: app; a gap longer than the idle threshold starts a new visit; a visit
 #: lasts from its first event to its last.
+#:
+#: Every parameter is cast explicitly. SQLAlchemy Core adds the casts itself,
+#: but a raw `text()` does not, and asyncpg prepares statements — so `:until`,
+#: which appears only in `IS NULL` and a comparison, had no type it could
+#: infer and the whole report returned 500 with
+#: `could not determine data type of parameter $2`.
 _TIME_ON_APP_SQL = """
 WITH ordered AS (
     SELECT user_id, app, occurred_at,
@@ -2105,12 +2111,14 @@ WITH ordered AS (
                PARTITION BY user_id, app ORDER BY occurred_at) AS previous
     FROM analytics.event
     WHERE user_id IS NOT NULL
-      AND occurred_at >= :since
-      AND (:until IS NULL OR occurred_at < :until)
+      AND occurred_at >= CAST(:since AS timestamptz)
+      AND (CAST(:until AS timestamptz) IS NULL
+           OR occurred_at < CAST(:until AS timestamptz))
 ), marked AS (
     SELECT user_id, app, occurred_at,
            CASE WHEN previous IS NULL
-                     OR occurred_at - previous > make_interval(mins => :gap)
+                     OR occurred_at - previous
+                        > make_interval(mins => CAST(:gap AS integer))
                 THEN 1 ELSE 0 END AS starts_visit
     FROM ordered
 ), visits AS (
@@ -2124,7 +2132,7 @@ WITH ordered AS (
     FROM visits GROUP BY user_id, app, visit
 )
 SELECT user_id, app,
-       SUM(seconds) + COUNT(*) * :tail AS seconds,
+       SUM(seconds) + COUNT(*) * CAST(:tail AS integer) AS seconds,
        COUNT(*) AS visits
 FROM spans GROUP BY user_id, app
 """
