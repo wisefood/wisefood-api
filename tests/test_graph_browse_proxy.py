@@ -266,3 +266,43 @@ def test_an_invented_graph_event_is_still_refused():
 
     with pytest.raises(ValidationError):
         ActivityEventIn(type="graph.whatever")
+
+
+# ── the envelope ──────────────────────────────────────────────────────────
+
+def _graph_read(method, upstream, *args):
+    from backend.foodscholar import FOODSCHOLAR
+
+    async def fake_get(endpoint, params=None, **kwargs):
+        return upstream
+
+    original = FOODSCHOLAR.get
+    try:
+        FOODSCHOLAR.get = fake_get
+        return asyncio.run(getattr(FOODSCHOLAR, method)(*args))
+    finally:
+        FOODSCHOLAR.get = original
+
+
+def test_the_upstream_envelope_is_taken_off():
+    """FoodScholar answers through `@render()` and so does this router. Passed
+    through as-is, the body arrived two envelopes deep, the UI stripped one,
+    and a built graph read as `built: undefined` — never built."""
+    upstream = {
+        "help": "http://foodscholar:8001/api/v1/graph/summary",
+        "success": True,
+        "result": {"enabled": True, "built": True, "documents": 6148},
+    }
+    assert _graph_read("graph_summary", upstream) == upstream["result"]
+
+
+def test_a_list_payload_is_taken_off_too():
+    upstream = {"help": "h", "success": True, "result": [{"facet": "foods"}]}
+    assert _graph_read("graph_facets", upstream) == [{"facet": "foods"}]
+
+
+def test_a_bare_payload_passes_through():
+    """If FoodScholar ever stops enveloping, the proxy must not start
+    breaking in the other direction."""
+    bare = {"items": [], "total": 0, "facets": {}}
+    assert _graph_read("graph_search", bare) == bare

@@ -27,6 +27,17 @@ def _delegated(token: Optional[str]) -> Optional[Dict[str, str]]:
     return {DELEGATED_TOKEN_HEADER: token} if token else None
 
 
+
+def _unwrap_envelope(payload: Any) -> Any:
+    """The `result` of a `{help, success, result}` envelope, else the payload.
+
+    A no-op on a bare payload, so an upstream that stops enveloping does not
+    break the proxy the other way.
+    """
+    if isinstance(payload, dict) and "success" in payload and "result" in payload:
+        return payload["result"]
+    return payload
+
 class FoodScholar:
     """Singleton HTTP client for accessing the FoodScholar API with connection pooling."""
 
@@ -518,70 +529,82 @@ class FoodScholar:
     # ------------------------------------------------------------------ #
 
     @classmethod
+    async def _graph_get(cls, endpoint: str, params: Optional[Dict[str, Any]] = None):
+        """A graph read, with FoodScholar's envelope taken off.
+
+        The graph routes upstream answer through `@render()`, and so do ours.
+        Passing the upstream body through as-is put one envelope inside the
+        other, and a client that strips one found `{help, success, result}`
+        where the payload should be — `summary.built` read as missing, and a
+        freshly reindexed graph reported itself as never built.
+        """
+        return _unwrap_envelope(await cls.get(endpoint, params=params))
+
+    @classmethod
     async def graph_summary(cls):
-        return await cls.get("/api/v1/graph/summary")
+        return await cls._graph_get("/api/v1/graph/summary")
 
     @classmethod
     async def graph_facets(cls):
-        return await cls.get("/api/v1/graph/facets")
+        return await cls._graph_get("/api/v1/graph/facets")
 
     @classmethod
     async def graph_facet_roots(cls, facet: str, params: Optional[Dict[str, Any]] = None):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/facets/{quote(str(facet), safe='')}/roots", params=params
         )
 
     @classmethod
     async def graph_node(cls, node_id: str):
-        return await cls.get(f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}")
+        return await cls._graph_get(f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}")
 
     @classmethod
     async def graph_node_children(cls, node_id: str, params: Optional[Dict[str, Any]] = None):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/children", params=params
         )
 
     @classmethod
     async def graph_node_themes(cls, node_id: str, params: Optional[Dict[str, Any]] = None):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/themes", params=params
         )
 
     @classmethod
     async def graph_node_breadcrumb(cls, node_id: str):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/breadcrumb"
         )
 
     @classmethod
     async def graph_node_chunks(cls, node_id: str, params: Optional[Dict[str, Any]] = None):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/nodes/{quote(str(node_id), safe='')}/chunks", params=params
         )
 
     @classmethod
     async def graph_card(cls, target_id: str):
-        return await cls.get(f"/api/v1/graph/cards/{quote(str(target_id), safe='')}")
+        return await cls._graph_get(f"/api/v1/graph/cards/{quote(str(target_id), safe='')}")
 
     @classmethod
     async def graph_search(cls, params: Optional[Dict[str, Any]] = None):
-        return await cls.get("/api/v1/graph/search", params=params)
+        return await cls._graph_get("/api/v1/graph/search", params=params)
 
     @classmethod
     async def graph_suggest(cls, params: Optional[Dict[str, Any]] = None):
-        return await cls.get("/api/v1/graph/suggest", params=params)
+        return await cls._graph_get("/api/v1/graph/suggest", params=params)
 
     @classmethod
     async def graph_filters(cls, params: Optional[Dict[str, Any]] = None):
-        return await cls.get("/api/v1/graph/filters", params=params)
+        return await cls._graph_get("/api/v1/graph/filters", params=params)
 
     @classmethod
     async def graph_entities(cls, params: Optional[Dict[str, Any]] = None):
-        return await cls.get("/api/v1/graph/entities", params=params)
+        return await cls._graph_get("/api/v1/graph/entities", params=params)
 
     @classmethod
     async def graph_entity(cls, ontology_id: str):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/entities/{quote(str(ontology_id), safe='')}"
         )
 
@@ -589,7 +612,7 @@ class FoodScholar:
     async def graph_entity_chunks(
         cls, ontology_id: str, params: Optional[Dict[str, Any]] = None
     ):
-        return await cls.get(
+        return await cls._graph_get(
             f"/api/v1/graph/entities/{quote(str(ontology_id), safe='')}/chunks",
             params=params,
         )
@@ -608,7 +631,7 @@ class FoodScholar:
             params=params,
             timeout=httpx.Timeout(connect=10.0, read=1800.0, write=30.0, pool=10.0),
         )
-        return response.json()
+        return _unwrap_envelope(response.json())
 
     @classmethod
     async def graph_stream(cls, path: str, params: Optional[Dict[str, Any]] = None):
