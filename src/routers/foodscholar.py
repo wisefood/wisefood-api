@@ -1030,51 +1030,58 @@ async def graph_entity_chunks(request: Request, ontology_id: str):
     return await FOODSCHOLAR.graph_entity_chunks(ontology_id, _graph_params(request))
 
 
-@router.get("/graph/cards/{target_id}", dependencies=[Depends(auth())])
+# Node and card ids take the `path` converter. Theme ids are slash-separated
+# (`foods/olive_oil/monounsaturated_fat_r1`) and card ids embed them; the
+# server decodes the browser's `%2F` before routing, so a plain `{node_id}`
+# made every theme and card a 404 that never reached a handler, while shelves
+# (`foodon:…`) worked.
+#
+# `path` matches slashes, so the order below is load-bearing: the bare
+# `/graph/nodes/{node_id:path}` comes last, or it takes `x/children` as an id.
+# No real id ends in one of the sub-route names — theme ids end in `_r1`,
+# `_m2` or `_g3` — so a sub-route cannot claim one in return.
+
+
+@router.get("/graph/cards/{target_id:path}", dependencies=[Depends(auth())])
 @render()
 async def graph_card(request: Request, target_id: str):
     """The Layer C card describing a shelf or theme."""
     return await FOODSCHOLAR.graph_card(target_id)
 
 
-# The node routes come after the static ones on purpose. `/graph/nodes/{id}`
-# cannot swallow `/graph/search`, but ordering them this way keeps the file
-# readable in the order a reader hits the paths.
-
-
-@router.get("/graph/nodes/{node_id}", dependencies=[Depends(auth())])
-@render()
-async def graph_node(request: Request, node_id: str):
-    """One node with everything its detail page needs, in one response."""
-    return await FOODSCHOLAR.graph_node(node_id)
-
-
-@router.get("/graph/nodes/{node_id}/children", dependencies=[Depends(auth())])
+@router.get("/graph/nodes/{node_id:path}/children", dependencies=[Depends(auth())])
 @render()
 async def graph_node_children(request: Request, node_id: str):
     """Child shelves of a shelf."""
     return await FOODSCHOLAR.graph_node_children(node_id, _graph_params(request))
 
 
-@router.get("/graph/nodes/{node_id}/themes", dependencies=[Depends(auth())])
+@router.get("/graph/nodes/{node_id:path}/themes", dependencies=[Depends(auth())])
 @render()
 async def graph_node_themes(request: Request, node_id: str):
     """Themes discovered on a shelf."""
     return await FOODSCHOLAR.graph_node_themes(node_id, _graph_params(request))
 
 
-@router.get("/graph/nodes/{node_id}/breadcrumb", dependencies=[Depends(auth())])
+@router.get("/graph/nodes/{node_id:path}/breadcrumb", dependencies=[Depends(auth())])
 @render()
 async def graph_node_breadcrumb(request: Request, node_id: str):
     """Ancestors of a node, root first."""
     return await FOODSCHOLAR.graph_node_breadcrumb(node_id)
 
 
-@router.get("/graph/nodes/{node_id}/chunks", dependencies=[Depends(auth())])
+@router.get("/graph/nodes/{node_id:path}/chunks", dependencies=[Depends(auth())])
 @render()
 async def graph_node_chunks(request: Request, node_id: str):
     """Evidence passages attached to a shelf or theme."""
     return await FOODSCHOLAR.graph_node_chunks(node_id, _graph_params(request))
+
+
+@router.get("/graph/nodes/{node_id:path}", dependencies=[Depends(auth())])
+@render()
+async def graph_node(request: Request, node_id: str):
+    """One node with everything its detail page needs, in one response."""
+    return await FOODSCHOLAR.graph_node(node_id)
 
 
 # ------------------------------------------------------------------ streams --

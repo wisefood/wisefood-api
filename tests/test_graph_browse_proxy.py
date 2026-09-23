@@ -51,12 +51,12 @@ def _route(path):
     ("GET", f"{PREFIX}/graph/search"),
     ("GET", f"{PREFIX}/graph/suggest"),
     ("GET", f"{PREFIX}/graph/filters"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/children"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/themes"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/breadcrumb"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/chunks"),
-    ("GET", f"{PREFIX}/graph/cards/{{target_id}}"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/children"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/themes"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/breadcrumb"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/chunks"),
+    ("GET", f"{PREFIX}/graph/cards/{{target_id:path}}"),
     ("GET", f"{PREFIX}/graph/entities"),
     ("GET", f"{PREFIX}/graph/entities/{{ontology_id}}"),
     ("GET", f"{PREFIX}/graph/entities/{{ontology_id}}/chunks"),
@@ -177,6 +177,58 @@ def test_node_ids_are_quoted_into_the_upstream_path():
     assert captured["endpoint"] == (
         "/api/v1/graph/nodes/shelf%2FFOODON%3A03301234"
     )
+
+
+# ── ids with slashes in them ──────────────────────────────────────────────
+
+SHELF = "foodon:FOODON_03411222"
+THEME = "foods/olive_oil/monounsaturated_fat_r1"
+CARD = f"card:theme:{THEME}"
+
+
+def _dispatch(raw_path):
+    """The route name and path params the app sends `raw_path` to.
+
+    The server percent-decodes the path before routing, so the browser's `%2F`
+    arrives as a real slash. This decodes the same way and takes the first full
+    match, which is what Starlette's router does.
+    """
+    import sys
+    from urllib.parse import unquote
+
+    from starlette.routing import Match
+
+    sys.path.insert(0, "src")
+    import main
+
+    scope = {"type": "http", "method": "GET", "path": unquote(raw_path), "root_path": ""}
+    for route in main.api.routes:
+        match, child = route.matches(scope)
+        if match == Match.FULL:
+            return route.name, child.get("path_params", {})
+    return None, {}
+
+
+@pytest.mark.parametrize("node_id", [SHELF, THEME, CARD], ids=["shelf", "theme", "card"])
+@pytest.mark.parametrize("template,handler", [
+    ("/graph/nodes/{}", "graph_node"),
+    ("/graph/nodes/{}/children", "graph_node_children"),
+    ("/graph/nodes/{}/themes", "graph_node_themes"),
+    ("/graph/nodes/{}/breadcrumb", "graph_node_breadcrumb"),
+    ("/graph/nodes/{}/chunks", "graph_node_chunks"),
+    ("/graph/cards/{}", "graph_card"),
+])
+def test_an_id_with_slashes_reaches_its_route_whole(template, handler, node_id):
+    """Theme ids are slash-separated and card ids embed them. With a plain
+    `{node_id}` every theme and card was a 404 before any handler ran, while
+    shelves worked — the tree opened and nothing inside it did. And with
+    `path`, a sub-route must not be read as the bare node route with
+    `/children` glued onto the id."""
+    from urllib.parse import quote
+
+    name, params = _dispatch(PREFIX + template.format(quote(node_id, safe="")))
+    assert name == handler, f"{template} for {node_id!r} dispatched to {name}"
+    assert list(params.values()) == [node_id]
 
 
 # ── the streams ───────────────────────────────────────────────────────────
