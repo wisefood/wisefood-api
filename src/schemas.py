@@ -1874,6 +1874,16 @@ CLIENT_EVENT_TYPES = frozenset(
         "graph.scope",
         "graph.search",
         "graph.ask_bridge",
+        # The two wizards. Onboarding is the household setup — run once for a
+        # new account and once more, in "claim" mode, for a guest who kept
+        # theirs (`props.mode` says which). Preferences is the food
+        # likes/dislikes wizard a guest is nudged into after their first
+        # page; `dismissed` is the nudge being waved away, which is the
+        # number that says whether the nudge is worth showing at all.
+        "onboarding.completed",
+        "onboarding.skipped",
+        "preferences.completed",
+        "preferences.dismissed",
     }
 )
 

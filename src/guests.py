@@ -10,10 +10,19 @@ Conventions (Keycloak is the single source of truth — no side registry):
 - attributes: ``wisefood_guest=true``, ``wisefood_guest_expires_at=<unix ts>``
 
 Each guest is provisioned with a household + one adult member so the UI's
-profile gate passes immediately. Teardown deletes external chat sessions,
-the household (cascades to members/plans), then the Keycloak user — in that
-order, because the household FK to the Keycloak user is ON DELETE SET NULL
-and would otherwise leave an orphaned household behind.
+profile gate passes immediately. Both carry placeholder names
+(GUEST_HOUSEHOLD_NAME / GUEST_MEMBER_NAME) and the household is tagged
+``metadata.guest = true``. When a guest keeps the account (``claim_guest``)
+the tag flips and ``metadata.onboarding = "pending"`` is set, which is what
+tells the console to run the household setup wizard once on the next
+sign-in so the placeholders get replaced by the person's own names. The
+wizard writes ``"complete"`` or ``"skipped"`` back through the ordinary
+household PATCH; nothing here reads the value again.
+
+Teardown deletes external chat sessions, the household (cascades to
+members/plans), then the Keycloak user — in that order, because the
+household FK to the Keycloak user is ON DELETE SET NULL and would otherwise
+leave an orphaned household behind.
 """
 import logging
 import secrets
@@ -32,6 +41,17 @@ GUEST_USERNAME_PREFIX = "guest-"
 GUEST_ROLE = "guest"
 GUEST_ATTRIBUTE = "wisefood_guest"
 GUEST_EXPIRES_ATTRIBUTE = "wisefood_guest_expires_at"
+
+#: Placeholder names a guest's household and member are provisioned with.
+#: The console treats these exact strings as "never set" when it prefills
+#: the setup wizard after a claim, so change them there too if they change.
+GUEST_HOUSEHOLD_NAME = "Guest Household"
+GUEST_MEMBER_NAME = "Guest"
+
+#: Household metadata key the console reads to decide whether to run the
+#: setup wizard, and the value that means "run it".
+HOUSEHOLD_ONBOARDING_KEY = "onboarding"
+HOUSEHOLD_ONBOARDING_PENDING = "pending"
 
 
 def _generate_password() -> str:
@@ -178,9 +198,9 @@ async def create_guest() -> Dict[str, Any]:
 
         household = await HOUSEHOLD.create(
             spec={
-                "name": "Guest Household",
+                "name": GUEST_HOUSEHOLD_NAME,
                 "metadata": {"guest": True},
-                "members": [{"name": "Guest", "age_group": "adult"}],
+                "members": [{"name": GUEST_MEMBER_NAME, "age_group": "adult"}],
             },
             creator={"sub": user_id},
         )
@@ -227,6 +247,36 @@ def is_guest(user_id: str) -> bool:
     return any((r or {}).get("name") == GUEST_ROLE for r in roles)
 
 
+async def mark_household_for_setup(user_id: str) -> bool:
+    """Flag the claimed account's household so the console runs setup once.
+
+    The household a guest was given still says "Guest Household" with a
+    member called "Guest", and nothing about the claim itself changes that.
+    Setting ``metadata.onboarding = "pending"`` (and dropping the ``guest``
+    tag, which would otherwise describe a permanent account's household as
+    a guest's) is the signal the console's profile gate reads; it sends the
+    person through the household wizard in "claim" mode on their next
+    sign-in, and the wizard's own PATCH replaces the value.
+
+    Returns whether the flag was written. A missing household — possible if
+    the guest erased it before claiming — is reported as not written, not
+    raised: the account is already permanent by the time this runs.
+    """
+    from api.v1.households import HOUSEHOLD
+
+    household = await HOUSEHOLD.get_by_owner(user_id)
+    if not household:
+        logger.warning("Claim %s: no household to flag for setup", user_id)
+        return False
+
+    metadata = dict(household.get("metadata") or {})
+    metadata["guest"] = False
+    metadata["claimed_at"] = int(time.time())
+    metadata[HOUSEHOLD_ONBOARDING_KEY] = HOUSEHOLD_ONBOARDING_PENDING
+    await HOUSEHOLD.patch(household["id"], {"metadata": metadata})
+    return True
+
+
 async def claim_guest(
     user_id: str,
     *,
@@ -251,6 +301,7 @@ async def claim_guest(
     2. the role — once it is gone the reaper cannot see them, so this is the
        step that makes the account permanent
     3. the attributes — cosmetic by then, since the reaper matches on the role
+    4. the household flag that sends them through the setup wizard next time
 
     The email is left unverified and Keycloak is asked to send its own
     verification mail. Marking it verified here would be friendlier by one
@@ -316,12 +367,22 @@ async def claim_guest(
         logger.warning("Claim %s: verification mail not sent", user_id, exc_info=True)
         verification_sent = False
 
+    # (4) The household. Same rule as the attributes: the account is theirs
+    # whether or not this lands, and if it does not they simply keep the
+    # placeholder names until they rename them from the profile page.
+    try:
+        household_setup_pending = await mark_household_for_setup(user_id)
+    except Exception:
+        logger.warning("Claim %s: household not flagged for setup", user_id, exc_info=True)
+        household_setup_pending = False
+
     logger.info("Guest %s claimed as a permanent account", user_id)
     return {
         "user_id": user_id,
         "email": email,
         "email_verified": False,
         "verification_sent": verification_sent,
+        "household_setup_pending": household_setup_pending,
     }
 
 

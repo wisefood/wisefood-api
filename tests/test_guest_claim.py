@@ -56,8 +56,37 @@ class FakeAdmin:
         self.verify_sent = True
 
 
+class FakeHousehold:
+    """The household entity as the claim sees it: one lookup, one patch."""
+
+    def __init__(self, household=None):
+        self.household = household
+        self.patches = []
+        self.fail = False
+
+    async def get_by_owner(self, owner_id):
+        if self.fail:
+            raise RuntimeError("database away")
+        return self.household
+
+    async def patch(self, household_id, spec):
+        self.patches.append((household_id, spec))
+        self.household = {**self.household, **spec}
+        return self.household
+
+
 @pytest.fixture
-def admin(monkeypatch):
+def household(monkeypatch):
+    import api.v1.households as households
+
+    fake = FakeHousehold({"id": "h-1", "name": "Guest Household",
+                          "metadata": {"guest": True}})
+    monkeypatch.setattr(households, "HOUSEHOLD", fake)
+    return fake
+
+
+@pytest.fixture
+def admin(monkeypatch, household):
     fake = FakeAdmin()
     monkeypatch.setattr(guests, "KEYCLOAK_ADMIN_CLIENT", lambda: fake)
     return fake
@@ -124,6 +153,69 @@ class TestTheOrderOfWrites:
         result = await claim()
         assert "guest" not in admin.roles
         assert result["verification_sent"] is False
+
+
+class TestTheHousehold:
+    """The claim leaves "Guest Household" and "Guest" in place; the flag it
+    sets is what sends the person through the setup wizard to fix that."""
+
+    @pytest.mark.asyncio
+    async def test_the_household_is_flagged_for_setup(self, admin, household):
+        result = await claim()
+        assert result["household_setup_pending"] is True
+        (household_id, spec), = household.patches
+        assert household_id == "h-1"
+        assert spec["metadata"]["onboarding"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_the_household_stops_being_a_guests(self, admin, household):
+        # A permanent account's household must not read as a guest's — the
+        # flag is what `guest: true` becomes, not something beside it.
+        await claim()
+        metadata = household.patches[0][1]["metadata"]
+        assert metadata["guest"] is False
+        assert isinstance(metadata["claimed_at"], int)
+
+    @pytest.mark.asyncio
+    async def test_other_metadata_survives(self, admin, household):
+        # The PATCH replaces metadata wholesale, so the helper has to carry
+        # whatever else is there rather than write only its own keys.
+        household.household["metadata"]["theme"] = "dark"
+        await claim()
+        assert household.patches[0][1]["metadata"]["theme"] == "dark"
+
+    @pytest.mark.asyncio
+    async def test_the_flag_is_set_after_the_account_is_permanent(self, admin, household):
+        # Recorded through the admin call log: the role drop must come first,
+        # so a failure here can only leave a permanent account unflagged,
+        # never a flagged guest that the reaper then deletes.
+        calls = []
+        original = household.patch
+
+        async def patch(household_id, spec):
+            calls.append(list(admin.calls))
+            return await original(household_id, spec)
+
+        household.patch = patch
+        await claim()
+        assert "delete_realm_roles_of_user" in calls[0]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_household_cannot_fail_the_claim(self, admin, household):
+        # A guest who erased their household before claiming still gets to
+        # keep the account; they just start from the ordinary setup wizard.
+        household.household = None
+        result = await claim()
+        assert "guest" not in admin.roles
+        assert result["household_setup_pending"] is False
+        assert household.patches == []
+
+    @pytest.mark.asyncio
+    async def test_a_database_fault_cannot_fail_the_claim(self, admin, household):
+        household.fail = True
+        result = await claim()
+        assert "guest" not in admin.roles
+        assert result["household_setup_pending"] is False
 
 
 class TestTheGuards:

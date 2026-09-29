@@ -242,6 +242,7 @@ The platform supports **ephemeral guest accounts** for demos and conference boot
 - **On-demand erasure** — `DELETE /api/v1/system/guest` wipes the calling guest immediately (household, members, FoodChat sessions, and the Keycloak user) — useful between one booth visitor and the next, without waiting for the TTL.
 - **Per-guest budgets** — expensive endpoints (chat, Q&A, search, sessions) are rate-limited per guest per day via Redis counters (`src/budget.py`), configurable through `GUEST_BUDGET_*`.
 - **Creation is IP-rate-limited** to curb abuse.
+- **Keeping the account** — `POST /api/v1/users/me/claim` upgrades the guest in place (email + password, the `guest` role dropped) so nothing moves. The pre-provisioned household is flagged `metadata.onboarding = "pending"` (`guest` flips to `false`), which the console reads to run the household setup wizard once on the next sign-in and replace the "Guest Household" / "Guest" placeholders; the wizard writes `complete` or `skipped` back through the household PATCH.
 
 Guest access is feature-flagged with `GUEST_ENABLED`; when off, the reaper does not run and the endpoints are inert.
 

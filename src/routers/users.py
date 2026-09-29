@@ -203,6 +203,10 @@ async def api_record_my_consent(
         "email and a password and stops expiring, and every meal plan, chat "
         "and household setting stays exactly where it is. The email is left "
         "unverified and Keycloak is asked to send its verification mail. "
+        "The household keeps its guest placeholder names until the person "
+        "signs in again: it is flagged `metadata.onboarding = \"pending\"` so "
+        "the console runs the setup wizard once (`household_setup_pending` in "
+        "the response says whether the flag was written). "
         "Refuses if the email already belongs to an account — merging two "
         "households is not something this can do safely."
     ),
