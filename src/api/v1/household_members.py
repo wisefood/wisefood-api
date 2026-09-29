@@ -48,6 +48,18 @@ def _profile_cache_invalidate(member_id: str) -> None:
         pass
 
 
+# The entity cache is the other one. `verify_access` fills it through
+# `aget_entity` on every request that names a member or a household, and
+# `GET /members/{id}` and `GET /households/{id}` answer straight out of it —
+# so a write that does not empty it keeps answering with the old row. A
+# household's cached copy embeds its members, a member's its profile, which
+# is why the invalidations below reach across.
+def _household_cache_invalidate(household_id: str) -> None:
+    from api.v1.households import HOUSEHOLD  # local: the two modules stay independent
+
+    HOUSEHOLD.invalidate_cache(household_id)
+
+
 class HouseholdMemberEntity(Entity):
     """
     Household Member entity for managing member resources via the Entity API pattern.
@@ -206,6 +218,7 @@ class HouseholdMemberEntity(Entity):
                 await self._create_member_profile_in_session(db, member_id, profile_data)
 
             await db.commit()
+            _household_cache_invalidate(household_id)
 
             result = await db.execute(
                 select(HouseholdMember)
@@ -264,6 +277,9 @@ class HouseholdMemberEntity(Entity):
                 # through the member endpoint kept serving its old value for up
                 # to the cache TTL.
                 _profile_cache_invalidate(entity_id)
+            # A renamed member answered to the old name on GET /members/{id}
+            # for as long as Redis kept the entry.
+            self.invalidate_cache(entity_id)
             return member.to_dict(include_profile=True)
 
     async def delete(
@@ -277,12 +293,20 @@ class HouseholdMemberEntity(Entity):
         :return: True if deleted
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            household_id = (
+                await db.execute(
+                    select(HouseholdMember.household_id).where(HouseholdMember.id == entity_id)
+                )
+            ).scalar_one_or_none()
             result = await db.execute(
                 delete(HouseholdMember).where(HouseholdMember.id == entity_id)
             )
             await db.commit()
             # The member's profile is removed with them (cascade).
             _profile_cache_invalidate(entity_id)
+            self.invalidate_cache(entity_id)
+            if household_id:
+                _household_cache_invalidate(household_id)
             return result.rowcount > 0
 
     async def search(
@@ -391,6 +415,7 @@ class HouseholdMemberEntity(Entity):
             profile_dict = await self._create_member_profile_in_session(db, member_id, profile_data)
             await db.commit()
             _profile_cache_invalidate(member_id)
+            self.invalidate_cache(member_id)
             return profile_dict
 
     async def get_member_profile(
@@ -465,6 +490,7 @@ class HouseholdMemberEntity(Entity):
             await db.commit()
             profile_dict = profile.to_dict()
             _profile_cache_invalidate(member_id)
+            self.invalidate_cache(member_id)
             return profile_dict
 
     async def delete_member_profile(
@@ -485,6 +511,7 @@ class HouseholdMemberEntity(Entity):
             )
             await db.commit()
             _profile_cache_invalidate(member_id)
+            self.invalidate_cache(member_id)
             return result.rowcount > 0
 
     # ========== Member Saved Item (Library) Operations ==========

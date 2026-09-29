@@ -223,6 +223,10 @@ class HouseholdEntity(Entity):
             household.updated_at = datetime.now(timezone.utc)
             await db.flush()
             await db.commit()
+            # GET /households/{id} answers from the entity cache that
+            # `verify_access` filled; without this a renamed household kept
+            # its old name there for as long as Redis held the entry.
+            self.invalidate_cache(entity_id)
 
             return household.to_dict(include_members=True)
 
@@ -237,10 +241,24 @@ class HouseholdEntity(Entity):
         :return: True if deleted
         """
         async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+            member_ids = list(
+                (
+                    await db.execute(
+                        select(HouseholdMember.id).where(HouseholdMember.household_id == entity_id)
+                    )
+                ).scalars().all()
+            )
             result = await db.execute(
                 delete(Household).where(Household.id == entity_id)
             )
             await db.commit()
+            self.invalidate_cache(entity_id)
+            # The members go with the household (cascade); a cached copy must
+            # not outlive the row, or GET /members/{id} keeps finding them.
+            from api.v1.household_members import HOUSEHOLD_MEMBER  # local: no import cycle
+
+            for member_id in member_ids:
+                HOUSEHOLD_MEMBER.invalidate_cache(member_id)
             return result.rowcount > 0
 
     async def search(

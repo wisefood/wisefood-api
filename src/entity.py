@@ -184,11 +184,20 @@ class Entity:
         """
         Cache the entity.
 
-        This method caches the entity for faster access.
+        With an expiry. This cache is filled on every ownership check
+        (``aget_entity`` in the routers' ``verify_access``) and the single-
+        entity GETs answer out of it, so an entry that never expired outlived
+        every write that forgot to drop it — a renamed member kept its old
+        name for as long as Redis held the row. Writes drop their own entry;
+        the expiry bounds the damage if one is missed.
         """
         if config.settings.get("CACHE_ENABLED", False):
             try:
-                REDIS.set(entity_id, obj)
+                REDIS.set(
+                    entity_id,
+                    obj,
+                    ttl_seconds=config.settings.get("ENTITY_CACHE_TTL_SECONDS", 600),
+                )
             except Exception as e:
                 logging.error(f"Failed to cache entity {entity_id}: {e}")
     

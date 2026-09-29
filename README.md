@@ -253,7 +253,7 @@ Guest access is feature-flagged with `GUEST_ENABLED`; when off, the reaper does 
 | Store | Adapter | Used for |
 |-------|---------|----------|
 | **PostgreSQL** | `src/backend/postgres.py` | The gateway's owned domain: households, members, profiles, meal plans, saved library, consent. SQLAlchemy 2.0 **async** (asyncpg), pooled singleton. |
-| **Redis** | `src/backend/redis.py` | Member-profile cache (invalidated on write), downscaled image cache, per-guest rate budgets. Toggled with `CACHE_ENABLED`. |
+| **Redis** | `src/backend/redis.py` | Entity cache for households and members (filled by every ownership check, dropped by every write, bounded by `ENTITY_CACHE_TTL_SECONDS`), member-profile cache (invalidated on write), downscaled image cache, per-guest rate budgets. Toggled with `CACHE_ENABLED`. |
 | **MinIO / S3** | `src/backend/minio.py` | Member/recipe image object storage; serves external URLs. |
 | **Elasticsearch** | `src/backend/elastic.py` | Catalog-adjacent reads where needed. |
 | **Keycloak** | `src/backend/keycloak.py` | Identity: token verification, admin operations (guest provisioning, account deletion). |

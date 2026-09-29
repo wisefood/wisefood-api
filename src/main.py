@@ -156,6 +156,12 @@ class Config:
         self.settings["CACHE_ENABLED"] = (
             os.getenv("CACHE_ENABLED", "false").lower() == "true"
         )
+        # How long a cached household or member may be served before it is
+        # read again. Writes drop the entry themselves; this is the bound on
+        # the damage if one is ever missed, which used to be "forever".
+        self.settings["ENTITY_CACHE_TTL_SECONDS"] = int(
+            os.getenv("ENTITY_CACHE_TTL_SECONDS", 600)
+        )
         self.settings["REDIS_HOST"] = os.getenv("REDIS_HOST", "redis")
         self.settings["REDIS_PORT"] = _env_port("REDIS_PORT", 6379)
         self.settings["IMAGE_CACHE_REDIS_DB"] = int(
