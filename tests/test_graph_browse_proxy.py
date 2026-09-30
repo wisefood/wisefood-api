@@ -51,12 +51,12 @@ def _route(path):
     ("GET", f"{PREFIX}/graph/search"),
     ("GET", f"{PREFIX}/graph/suggest"),
     ("GET", f"{PREFIX}/graph/filters"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/children"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/themes"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/breadcrumb"),
-    ("GET", f"{PREFIX}/graph/nodes/{{node_id}}/chunks"),
-    ("GET", f"{PREFIX}/graph/cards/{{target_id}}"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/children"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/themes"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/breadcrumb"),
+    ("GET", f"{PREFIX}/graph/nodes/{{node_id:path}}/chunks"),
+    ("GET", f"{PREFIX}/graph/cards/{{target_id:path}}"),
     ("GET", f"{PREFIX}/graph/entities"),
     ("GET", f"{PREFIX}/graph/entities/{{ontology_id}}"),
     ("GET", f"{PREFIX}/graph/entities/{{ontology_id}}/chunks"),
@@ -79,6 +79,65 @@ def test_the_client_exposes_the_method(method):
     from backend.foodscholar import FOODSCHOLAR
 
     assert hasattr(FOODSCHOLAR, method)
+
+
+# ── slashed ids reach their routes ────────────────────────────────────────
+
+THEME = "foods/olive_oil/monounsaturated_fat_r1"
+CARD = f"card:{THEME}"
+
+
+def _match(path):
+    """Which endpoint the gateway's router picks for a request path, and the
+    path params it extracts. Route matching only: no auth, no upstream."""
+    import sys
+
+    from starlette.routing import Match
+
+    sys.path.insert(0, "src")
+    import main
+
+    scope = {"type": "http", "method": "GET", "path": path, "root_path": ""}
+    for route in main.api.router.routes:
+        match, child = route.matches(scope)
+        if match is Match.FULL:
+            return route.endpoint.__name__, child["path_params"]
+    raise AssertionError(f"nothing matches {path}")
+
+
+@pytest.mark.parametrize("suffix,endpoint", [
+    ("", "graph_node"),
+    ("/children", "graph_node_children"),
+    ("/themes", "graph_node_themes"),
+    ("/breadcrumb", "graph_node_breadcrumb"),
+    ("/chunks", "graph_node_chunks"),
+])
+def test_a_theme_id_with_slashes_reaches_its_node_route(suffix, endpoint):
+    """Theme ids are slash-separated and the server decodes %2F before routing.
+    With a plain `{node_id}` the tree opened and every theme inside it was a
+    404 raised here, never reaching FoodScholar."""
+    name, params = _match(f"{PREFIX}/graph/nodes/{THEME}{suffix}")
+    assert name == endpoint
+    assert params == {"node_id": THEME}
+
+
+def test_a_card_id_with_slashes_reaches_the_card_route():
+    name, params = _match(f"{PREFIX}/graph/cards/{CARD}")
+    assert name == "graph_card"
+    assert params == {"target_id": CARD}
+
+
+def test_a_shelf_id_still_routes_as_before():
+    name, params = _match(f"{PREFIX}/graph/nodes/foodon:00001234/children")
+    assert (name, params) == ("graph_node_children", {"node_id": "foodon:00001234"})
+
+
+def test_the_bare_node_route_does_not_swallow_sub_routes():
+    """`path` matches slashes, so the bare route must be registered last."""
+    for suffix in ("children", "themes", "breadcrumb", "chunks"):
+        name, params = _match(f"{PREFIX}/graph/nodes/foodon:1/{suffix}")
+        assert name == f"graph_node_{suffix}", f"/{suffix} was taken as part of the id"
+        assert params["node_id"] == "foodon:1"
 
 
 # ── the gates ─────────────────────────────────────────────────────────────
