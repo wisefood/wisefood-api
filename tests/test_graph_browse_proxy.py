@@ -238,6 +238,82 @@ def test_node_ids_are_quoted_into_the_upstream_path():
     )
 
 
+# ── one envelope, not two ─────────────────────────────────────────────────
+
+ENVELOPE = {"help": "http://foodscholar/api/v1/graph/x", "success": True,
+            "result": {"built": True, "items": [{"node_id": "facet:foods"}]}}
+
+
+def _with_fake_get(coro_factory, body):
+    from backend.foodscholar import FOODSCHOLAR
+
+    async def fake_get(endpoint, params=None, **kwargs):
+        return body
+
+    original = FOODSCHOLAR.get
+    try:
+        FOODSCHOLAR.get = fake_get
+        return asyncio.run(coro_factory(FOODSCHOLAR))
+    finally:
+        FOODSCHOLAR.get = original
+
+
+@pytest.mark.parametrize("call", [
+    lambda c: c.graph_summary(),
+    lambda c: c.graph_facets(),
+    lambda c: c.graph_facet_roots("foods", {"limit": "5"}),
+    lambda c: c.graph_node("foods/olive_oil/x_r1"),
+    lambda c: c.graph_node_children("foodon:1", {}),
+    lambda c: c.graph_node_themes("foodon:1", {}),
+    lambda c: c.graph_node_breadcrumb("foodon:1"),
+    lambda c: c.graph_node_chunks("foodon:1", {}),
+    lambda c: c.graph_card("card:foods/olive_oil/x_r1"),
+    lambda c: c.graph_search({"q": "olive"}),
+    lambda c: c.graph_suggest({"q": "ol"}),
+    lambda c: c.graph_filters({}),
+    lambda c: c.graph_entities({}),
+    lambda c: c.graph_entity("FOODON:1"),
+    lambda c: c.graph_entity_chunks("FOODON:1", {}),
+])
+def test_foodscholars_envelope_is_taken_off(call):
+    """FoodScholar's graph routes answer in their own {help, success, result}
+    envelope and render() adds ours. Forwarded verbatim, the browser stripped
+    one and read `built` off the wrong object: the hierarchy page reported the
+    graph as not built while the summary said it was."""
+    assert _with_fake_get(call, dict(ENVELOPE)) == ENVELOPE["result"]
+
+
+def test_a_bare_body_passes_through_unchanged():
+    """A route that does not envelope (or a future FoodScholar that stops)
+    must not lose anything to the unwrapping."""
+    bare = {"built": True, "items": []}
+    assert _with_fake_get(lambda c: c.graph_summary(), dict(bare)) == bare
+    assert _with_fake_get(lambda c: c.graph_facets(), [{"facet": "foods"}]) == [{"facet": "foods"}]
+
+
+def test_a_result_that_merely_has_a_result_key_is_not_mistaken_for_an_envelope():
+    body = {"result": "a search hit field", "items": []}
+    assert _with_fake_get(lambda c: c.graph_search({}), dict(body)) == body
+
+
+def test_reindex_is_unwrapped_too():
+    from backend.foodscholar import FOODSCHOLAR
+
+    class _Resp:
+        def json(self):
+            return dict(ENVELOPE)
+
+    async def fake_request(method, endpoint, **kwargs):
+        return _Resp()
+
+    original = FOODSCHOLAR._request
+    try:
+        FOODSCHOLAR._request = fake_request
+        assert asyncio.run(FOODSCHOLAR.graph_reindex()) == ENVELOPE["result"]
+    finally:
+        FOODSCHOLAR._request = original
+
+
 # ── the streams ───────────────────────────────────────────────────────────
 
 def test_the_stream_routes_are_not_enveloped():
