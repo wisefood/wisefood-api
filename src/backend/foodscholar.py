@@ -447,6 +447,33 @@ class FoodScholar:
         return await cls.post(f"/api/v1/guidelines/import/{artifact_uuid}", json=payload)
 
     # ------------------------------------------------------------------ #
+    # Guide Excel export (console)
+    # ------------------------------------------------------------------ #
+    @classmethod
+    async def enqueue_guide_export(cls, guide_urn: str, payload: dict | None = None):
+        return await cls.post(
+            f"/api/v1/guidelines/export/{quote(guide_urn, safe=':')}", json=payload or {}
+        )
+
+    @classmethod
+    async def get_guide_export_status(cls, guide_urn: str):
+        return await cls.get(f"/api/v1/guidelines/export/{quote(guide_urn, safe=':')}")
+
+    @classmethod
+    async def download_guide_export(cls, guide_urn: str) -> httpx.Response:
+        """The finished workbook as the raw upstream response.
+
+        Bytes and headers, not JSON: `get()` would try to parse an .xlsx. A
+        large guide's workbook is a few megabytes, so the read gets more than
+        the pooled client's 15 s default.
+        """
+        return await cls._request(
+            "GET",
+            f"/api/v1/guidelines/export/{quote(guide_urn, safe=':')}/download",
+            timeout=60.0,
+        )
+
+    # ------------------------------------------------------------------ #
     # Guideline facet enrichment (post-extraction)
     # ------------------------------------------------------------------ #
 

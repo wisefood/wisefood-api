@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query, Request, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+import httpx
 from routers.generic import render
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -31,7 +32,7 @@ from backend.foodscholar import FOODSCHOLAR
 from budget import deny_guests, guest_budget
 from api.v1.households import HOUSEHOLD
 from api.v1.household_members import HOUSEHOLD_MEMBER
-from exceptions import AuthorizationError
+from exceptions import AuthorizationError, ConflictError, InvalidError, NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -539,6 +540,89 @@ async def import_guidelines(
 ):
     return await FOODSCHOLAR.import_guidelines(
         artifact_uuid, body.model_dump(exclude_none=True)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Guide Excel export
+#
+# Console-only, so admin/expert like the console itself. FoodScholar reads the
+# guide with its service account, drafts included, which is what a curator
+# exporting from the console expects to get.
+# --------------------------------------------------------------------------- #
+
+
+class GuideExportBody(BaseModel):
+    force: bool = Field(
+        default=False,
+        description="Queue a new export even if one is already queued or running",
+    )
+
+
+def _guide_export_error(exc: httpx.HTTPStatusError) -> Exception:
+    """FoodScholar's 400/404/409 as the same status here, instead of a 500."""
+    try:
+        detail = exc.response.json().get("detail")
+    except Exception:
+        detail = None
+    status = exc.response.status_code
+    if status == 400:
+        return InvalidError(detail or "Not a guide identifier")
+    if status == 404:
+        return NotFoundError(detail or "There is no finished export of this guide")
+    if status == 409:
+        return ConflictError(detail or "The export of this guide has not finished yet")
+    return exc
+
+
+@router.post(
+    "/guidelines/export/{guide_urn}",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def enqueue_guide_export(
+    request: Request, guide_urn: str, body: GuideExportBody | None = None
+):
+    try:
+        return await FOODSCHOLAR.enqueue_guide_export(
+            guide_urn, body.model_dump() if body else {}
+        )
+    except httpx.HTTPStatusError as exc:
+        raise _guide_export_error(exc) from exc
+
+
+@router.get(
+    "/guidelines/export/{guide_urn}",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def get_guide_export_status(request: Request, guide_urn: str):
+    try:
+        return await FOODSCHOLAR.get_guide_export_status(guide_urn)
+    except httpx.HTTPStatusError as exc:
+        raise _guide_export_error(exc) from exc
+
+
+@router.get(
+    "/guidelines/export/{guide_urn}/download",
+    dependencies=[Depends(auth("admin,expert"))],
+)
+@render()
+async def download_guide_export(request: Request, guide_urn: str):
+    """The finished workbook, passed through as bytes with its file name."""
+    try:
+        upstream = await FOODSCHOLAR.download_guide_export(guide_urn)
+    except httpx.HTTPStatusError as exc:
+        raise _guide_export_error(exc) from exc
+
+    headers = {"Cache-Control": "no-store"}
+    disposition = upstream.headers.get("content-disposition")
+    if disposition:
+        headers["Content-Disposition"] = disposition
+    return Response(
+        content=upstream.content,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
+        headers=headers,
     )
 
 
