@@ -2,8 +2,8 @@
 
 Every mail the platform sends — a shared meal plan, an inactivity reminder, and
 (through the Keycloak email theme in core-components) verification and
-password-reset mail — goes out in this frame: the WiseFood logo on the site's
-warm background, a white card, one clear button, and the consortium footer
+password-reset mail — goes out in this frame: the WiseFood logo on a white
+page, a white card, one clear button, and the consortium footer
 with the EU emblem. Before this, each sender styled its own body inline and
 Keycloak sent the bare base theme, so a participant could not tell at a glance
 that three mails came from the same place.
@@ -37,8 +37,13 @@ from typing import Dict, List, Optional, Sequence, Tuple
 BRAND = "#d53355"          # --brand, the console's primary
 BRAND_DARK = "#aa2944"     # --color-brand-600, links on white
 BRAND_GREEN = "#a6b52b"    # --brandg
-PAGE_BG = "#f6efe6"        # --earth-1
-CARD_BORDER = "#ebe3d7"
+# White page, neutral greys: no warm tints. Gmail's apps and Outlook ignore
+# `color-scheme: light` and darken light colours in dark mode while keeping
+# their hue, so the site's warm cream (#f6efe6) arrived as a brown page.
+# Colourless greys darken to grey.
+PAGE_BG = "#ffffff"
+CARD_BORDER = "#e4e4e7"    # --ui-border (zinc-200)
+PANEL_BG = "#f4f4f5"       # a tinted box inside the card (zinc-100)
 HEADING = "#1d2125"
 TEXT = "#3d4148"
 MUTED = "#80858d"
@@ -211,10 +216,11 @@ def render(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="x-apple-disable-message-reformatting">
-<meta name="color-scheme" content="light">
-<meta name="supported-color-schemes" content="light">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
 <title>{_esc(title)}</title>
 <style>
+  :root {{ color-scheme: light only; }}
   body {{ margin:0; padding:0; background:{PAGE_BG}; }}
   a {{ color:{BRAND_DARK}; }}
   @media (max-width:620px) {{

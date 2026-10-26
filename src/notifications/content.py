@@ -190,7 +190,7 @@ def render_reminder(
             '<tr><td style="padding:0 0 10px;">'
             '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
             'style="border-collapse:separate;">'
-            f'<tr><td style="padding:12px 14px;background:#faf7f2;border-radius:10px;'
+            f'<tr><td style="padding:12px 14px;background:{email_layout.PANEL_BG};border-radius:10px;'
             f'border-left:3px solid {colour};font-family:{email_layout.FONT};font-size:14px;'
             f'line-height:1.5;color:{email_layout.TEXT};">'
             f'<strong style="color:{email_layout.HEADING};">{html.escape(app)}</strong><br>'
