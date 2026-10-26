@@ -26,6 +26,8 @@ from schemas import (
     UserConsentRecord,
     UserConsentStatus,
     GuestClaim,
+    NotificationPreferences,
+    NotificationPreferencesUpdate,
 )
 from api.v1.users import USER_CONSENT, DEFAULT_CONSENT_TYPE
 
@@ -301,3 +303,57 @@ async def api_set_my_analytics_consent(
         decided_at=consent["granted_at"],
         mode=consent_mode(),
     )
+
+
+@router.get(
+    "/me/notification-preferences",
+    dependencies=[Depends(auth())],
+    summary="Whether this user wants reminder emails",
+)
+@render()
+async def api_get_my_notification_preferences(request: Request):
+    """The switch on the profile page.
+
+    Never fails the profile page: a guest, or a deployment that has not applied
+    the notifications schema, gets the default with ``applies`` false, and the
+    page hides the switch rather than showing one that cannot be saved.
+    """
+    from notifications import preferences
+
+    user_id = kutils.current_user(request)["sub"]
+    if kutils.is_guest(request):
+        return NotificationPreferences(applies=False)
+    try:
+        current = await preferences.get(user_id)
+    except Exception:
+        logger.debug("notifications.preferences_unavailable", exc_info=True)
+        return NotificationPreferences(applies=False)
+    return NotificationPreferences(**current)
+
+
+@router.put(
+    "/me/notification-preferences",
+    dependencies=[Depends(auth())],
+    summary="Turn reminder emails on or off for this user",
+)
+@render()
+async def api_set_my_notification_preferences(
+    request: Request, body: NotificationPreferencesUpdate
+):
+    """Takes effect for the next cycle; nothing already sent can be recalled."""
+    from exceptions import NotAllowedError, ServiceUnavailableError
+    from notifications import preferences
+
+    user_id = kutils.current_user(request)["sub"]
+    if kutils.is_guest(request):
+        raise NotAllowedError(detail="Guest accounts do not receive reminder emails.")
+    try:
+        current = await preferences.set_inactivity_reminders(
+            user_id, body.inactivity_reminders, via="profile"
+        )
+    except Exception as exc:
+        logger.warning("notifications.preferences_write_failed", exc_info=True)
+        raise ServiceUnavailableError(
+            detail="Email preferences cannot be saved on this deployment yet."
+        ) from exc
+    return NotificationPreferences(**current)

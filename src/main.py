@@ -153,6 +153,30 @@ class Config:
         # else is a send from our domain on their say-so, which is a spam
         # relay if it is unbounded.
         self.settings["MAIL_DAILY_LIMIT"] = int(os.getenv("MAIL_DAILY_LIMIT", 20))
+        # Who experimental reminders go to when the console names nobody: the
+        # deployment's administrator (config.admin.email in platform-deployment).
+        self.settings["ADMIN_EMAIL"] = os.getenv("ADMIN_EMAIL", "").strip()
+        # --- Inactivity reminders ----------------------------------------
+        # The deployment's kill switch for the reminder scheduler. Whether
+        # and how reminders are sent is decided at runtime from the console
+        # (Platform Operations); this only stops the loop from running at all.
+        self.settings["NOTIFICATIONS_ENABLED"] = (
+            os.getenv("NOTIFICATIONS_ENABLED", "true").lower() == "true"
+        )
+        # How often the loop wakes to check whether today's cycle is due.
+        self.settings["NOTIFICATIONS_TICK_SECONDS"] = int(
+            os.getenv("NOTIFICATIONS_TICK_SECONDS", 300)
+        )
+        # Pause between two reminders in one cycle, so a backlog does not
+        # reach the mail server as a burst.
+        self.settings["NOTIFICATIONS_SEND_INTERVAL_SECONDS"] = float(
+            os.getenv("NOTIFICATIONS_SEND_INTERVAL_SECONDS", 0.5)
+        )
+        # At most one "last seen" write per account per this many seconds per
+        # worker. A reminder is measured in days; ten minutes is precise enough.
+        self.settings["ACTIVITY_TOUCH_SECONDS"] = int(
+            os.getenv("ACTIVITY_TOUCH_SECONDS", 600)
+        )
         self.settings["CACHE_ENABLED"] = (
             os.getenv("CACHE_ENABLED", "false").lower() == "true"
         )
@@ -228,6 +252,32 @@ async def _guest_reaper_loop():
         await asyncio.sleep(interval)
 
 
+async def _notifications_loop():
+    """Wake every few minutes; run the day's reminder cycle when it is due.
+
+    Every replica and worker runs this. Only one of them sends: the day's run
+    is claimed with a unique row before anything is read, and each reminder
+    is claimed again before it is sent. See notifications/reminders.py.
+    """
+    from notifications import reminders
+
+    interval = config.settings["NOTIFICATIONS_TICK_SECONDS"]
+    # Spread the replicas out a little so they do not all query at once.
+    await asyncio.sleep(min(30, interval))
+    while True:
+        try:
+            result = await reminders.scheduler_tick()
+            if result:
+                logger.info(
+                    "Inactivity reminders: %s cycle sent %d, failed %d, %d due",
+                    result.get("mode"), result.get("sent", 0),
+                    result.get("failed", 0), result.get("due", 0),
+                )
+        except Exception:
+            logger.warning("Inactivity reminder tick failed", exc_info=True)
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
@@ -256,12 +306,19 @@ async def lifespan(app: FastAPI):
             config.settings["GUEST_MAX_ACTIVE"],
         )
 
+    notifications_task = None
+    if config.settings["NOTIFICATIONS_ENABLED"]:
+        notifications_task = asyncio.create_task(_notifications_loop())
+        logger.info("Inactivity reminder scheduler running (mode is set in the console)")
+
     # yield control to the application runtime
     yield
 
     # --- SHUTDOWN ---
     if reaper_task:
         reaper_task.cancel()
+    if notifications_task:
+        notifications_task.cancel()
     # Drained before the DB pool closes, or the last events die with it.
     await RECORDER.stop()
     logger.info("App shutdown: closing DB connections")
@@ -323,6 +380,7 @@ from routers.images import router as images_router
 from routers.observability import router as observability_router
 from routers.users import router as users_router
 from routers.analytics import router as analytics_router
+from routers.notifications import router as notifications_router
 
 api.include_router(households_router)
 api.include_router(household_members_router)
@@ -336,6 +394,7 @@ api.include_router(images_router)
 api.include_router(observability_router)
 api.include_router(users_router)
 api.include_router(analytics_router)
+api.include_router(notifications_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration

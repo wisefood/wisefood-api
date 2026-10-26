@@ -171,6 +171,23 @@ class RequestContextMiddleware:
                 context.reset(tokens)
             return
 
+        # "Last seen", for the inactivity reminders. A dictionary lookup on the
+        # hot path; the write, when one is due, happens on a background task.
+        # After the maintenance check, so a refused request is not a visit.
+        if payload:
+            try:
+                from notifications import activity
+
+                activity.touch(
+                    self._sub(payload),
+                    roles=self._roles(payload),
+                    locale=context.clean_locale(
+                        headers.get(context.LOCALE_HEADER) or headers.get("accept-language")
+                    ),
+                )
+            except Exception:
+                logger.debug("notifications.activity_touch_failed", exc_info=True)
+
         # RecipeWrangler authenticates nobody; it trusts this service to say who
         # is calling. Populated here so a newly added proxy route forwards
         # identity by default instead of by someone remembering to.

@@ -44,6 +44,12 @@ _SETTINGS_TTL = 30.0
 _CONSENT_TTL = 30.0
 _CONSENT_CACHE_MAX = 4096
 
+from notifications.config import (  # noqa: E402 — a leaf module, no cycle
+    DEFAULT_CONFIG as _NOTIFICATION_DEFAULTS,
+    SETTING_KEY as _NOTIFICATION_KEY,
+    validate as _validate_notifications,
+)
+
 #: Every runtime-editable key, with the value used when the row is absent.
 #: Anything not listed here is rejected by the settings endpoint, so a typo
 #: cannot silently become a setting nothing reads.
@@ -110,6 +116,12 @@ DEFAULTS: Dict[str, Any] = {
     # and when, and thirty-second propagation to every replica — and building
     # those again for one boolean would be the wrong kind of tidy.
     "platform.maintenance_mode": False,
+    # --- Notifications ----------------------------------------------------
+    # The inactivity reminders: mode (off / experimental / live), timing and
+    # caps, as one object so a change of plan lands atomically. Here for the
+    # same reasons as maintenance mode. Shape and validation are owned by
+    # `notifications.config`; this table only stores it.
+    "notifications.inactivity": dict(_NOTIFICATION_DEFAULTS),
 }
 
 #: Settings whose value is an open-ended map rather than a fixed set of
@@ -216,6 +228,10 @@ class SettingsCache:
             return float(value)
         if key in _OPEN_MAP_KEYS:
             return SettingsCache._validate_price_map(key, value)
+        # A structured object with its own rules: checked by its owner before
+        # the generic branch below, which would read it as a map of flags.
+        if key == _NOTIFICATION_KEY:
+            return _validate_notifications(value)
         if isinstance(default, dict):
             if not isinstance(value, dict):
                 raise ValueError(f"'{key}' must be an object")

@@ -184,6 +184,9 @@ class TestSettingsSurface:
             # Platform-wide, not analytics — it rides on this table for the
             # admin-only write and the replica propagation it already has.
             "platform.maintenance_mode",
+            # The inactivity reminders, for the same reasons; one object
+            # validated by notifications.config.
+            "notifications.inactivity",
         }
         assert set(DEFAULTS) == expected
 

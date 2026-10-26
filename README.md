@@ -34,6 +34,7 @@ Think of it as the **backend-for-frontend (BFF)** and **security perimeter** for
 - [API Surface](#api-surface)
 - [Observability](#observability)
 - [Activity Analytics](#activity-analytics)
+- [Email & Inactivity Reminders](#email--inactivity-reminders)
 - [GDPR / Data Erasure](#gdpr--data-erasure)
 - [Repository Structure](#repository-structure)
 - [Running the Service](#running-the-service)
@@ -291,7 +292,8 @@ All routes are under `/api/v1`. On the deployed platform the service also sits b
 |--------|--------|------|---------|
 | `/api/v1/households` | `households.py` | owned | Household CRUD |
 | `/api/v1/members` | `household_members.py`, `meal_plans.py` | owned | Members, profiles, favourites, **saved library**, adapted recipes, meal plans, saved plans |
-| `/api/v1/users` | `users.py` | owned | Consent ledger; self-service account deletion (GDPR) |
+| `/api/v1/users` | `users.py` | owned | Consent ledger; reminder-email preference; self-service account deletion (GDPR) |
+| `/api/v1/notifications` | `notifications.py` | owned | Inactivity reminders: admin configuration, preview, test send, run now, log; public unsubscribe |
 | `/api/v1/images` | `images.py` | owned | Image upload / retrieval (MinIO) |
 | `/api/v1/system` | `core.py` | core | Health (`/ping`, `/info`), login, guest access |
 | `/api/v1/recipewrangler` | `recipewrangler.py` | proxy | Recipe search, details, profiling, adaptation, soft-delete |
@@ -386,6 +388,63 @@ on/off, per-capability capture flags, sample rate. They only ever narrow what
 
 ---
 
+## Email & Inactivity Reminders
+
+### One look for every email
+
+Every mail WiseFood sends wears the same frame: the logo on the site's warm
+background, a white card, one button, and the consortium footer with the EU
+emblem. The gateway's frame is `src/email_layout.py`; Keycloak's verification,
+password-reset and account emails use the `wisefood` email theme in
+`core-components/keycloak/themes/wisefood`, which mirrors it. **Change both
+together.** The gateway attaches the logo and emblem inline (`cid:`), because
+linked images are blocked by default in Outlook and several webmail clients;
+Keycloak cannot, so its theme links to the console's public copies under
+`/app/email/`.
+
+`src/mailer.py` sends everything as 7-bit-safe MIME (quoted-printable or base64
+bodies) and serialises headers at the 998-character limit, so a long
+`List-Unsubscribe` URL reaches the mail client as a URL rather than an encoded
+word.
+
+### Inactivity reminders
+
+A friendly email to people who have stopped using the platform
+(`src/notifications/`). An admin configures it on the console's **Platform
+Operations** page; the configuration is one object in the admin settings table
+(key `notifications.inactivity`), so it reaches every replica within about
+thirty seconds and the change is audited.
+
+- **Modes.** `off` (the default — a deployment never starts writing to people
+  because it was upgraded), `experimental` (the real cycle, but every reminder
+  goes to the test recipients — or `ADMIN_EMAIL` — with a banner naming who it
+  was for), and `live`.
+- **Timing.** First reminder after `inactive_after_days`, then one every
+  `repeat_every_days`, at most `max_reminders` per absence; coming back resets
+  the count. One cycle a day at `send_hour_utc`, capped at `max_per_run`
+  (longest-away first), so a first backlog is spread over days.
+- **Who.** Enabled Keycloak accounts with a verified address (configurable),
+  never guests, agents or service accounts, staff (admin, expert) only if
+  included, and never anyone who turned reminders off.
+- **Last activity** is recorded by the request middleware for every
+  authenticated request (`notifications/activity.py`): at most one write per
+  account per `ACTIVITY_TOUCH_SECONDS`, off the request path. Accounts that
+  predate tracking start their clock at the first cycle that sees them, and
+  their mail says "a while" rather than inventing a number.
+- **Exactly once.** The day's scheduled run is claimed with a unique row, and
+  each reminder is claimed in `notification_log` before it is sent, keyed by
+  (person, stretch of absence, sequence). Replicas, workers and a manual "Run
+  now" racing the schedule all find the claim taken. Failed sends are retried
+  on later cycles, three attempts at most.
+- **Opting out.** A switch on My Profile (`/users/me/notification-preferences`),
+  the link in every reminder (a random per-person token, no login needed, never
+  acting on a GET), and RFC 8058 one-click unsubscribe from the
+  `List-Unsubscribe` header.
+- **Language.** The reminder is written in the language the person last used
+  the app in (en, hu, sl, el), falling back to their Keycloak locale.
+
+---
+
 ## GDPR / Data Erasure
 
 `src/erasure.py` implements right-to-erasure. Analytics rows are **anonymised in
@@ -394,7 +453,7 @@ nulled, the row stays. Deleting them would silently change aggregates that were
 already reported: last month's active-user count would drop when someone closes
 their account today.
 
-`purge_user(user_id)` deletes the user's households and members (which cascade to profiles, meal plans, saved items, favourites, adapted recipes), removes their FoodChat sessions downstream, and optionally deletes the Keycloak user itself.
+`purge_user(user_id)` deletes the user's households and members (which cascade to profiles, meal plans, saved items, favourites, adapted recipes), removes their FoodChat sessions downstream, deletes their reminder records (last activity, email preference, reminder log), and optionally deletes the Keycloak user itself.
 
 Ordering is deliberate: the account deletion must not be blocked by a failure elsewhere, or the caller would be left logged into an account they asked to erase. The consent ledger (`user_consent`) is intentionally **retained** as a record that consent existed — the privacy notice covers this. Self-service deletion is wired at `DELETE /api/v1/users/me` (`src/routers/users.py`); guest erasure is the separate flow described above.
 
@@ -416,7 +475,9 @@ Ordering is deliberate: the account deletion must not be blocked by a failure el
 │   ├── 10_init_schema.sql
 │   ├── 20_adapted_recipes.sql
 │   ├── 30_meal_plan_library.sql
-│   └── 40_saved_items.sql
+│   ├── 40_saved_items.sql
+│   ├── 5x_analytics*.sql, 60_sharing.sql
+│   └── 70_notifications.sql   # last activity, reminder preferences, runs, sends
 ├── scripts/
 │   └── diagnose_guests.py
 ├── tests/
@@ -432,6 +493,10 @@ Ordering is deliberate: the account deletion must not be blocked by a failure el
     ├── budget.py              # per-guest Redis rate budgets
     ├── guests.py              # ephemeral guest lifecycle
     ├── erasure.py             # GDPR right-to-erasure
+    ├── mailer.py              # outgoing mail (SMTP, 7-bit MIME, inline images)
+    ├── email_layout.py        # the shared email frame (mirrored by the Keycloak theme)
+    ├── assets/email/          # logo and EU emblem attached to every mail
+    ├── notifications/         # inactivity reminders: config, activity, preferences, content, cycle
     ├── exceptions.py          # typed APIException hierarchy → HTTP statuses
     ├── schemas.py             # Pydantic request/response models
     ├── sql.py                 # SQLAlchemy 2.0 async ORM (wisefood schema)
@@ -534,6 +599,8 @@ Configuration is read from environment variables in `src/main.py` (`Config.setup
 | **MinIO / S3** | `MINIO_ENDPOINT`, `MINIO_ROOT`, `MINIO_ROOT_PASSWORD`, `MINIO_BUCKET`, `MINIO_EXT_URL_API`, `MINIO_EXT_URL_CONSOLE` |
 | **Elasticsearch** | `ELASTIC_HOST`, `ES_DIM` |
 | **Langfuse** | `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` |
+| **Mail** | `SMTP_HOST` (unset disables sending), `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_SSL`, `SMTP_STARTTLS`, `SMTP_FROM`, `SMTP_FROM_NAME`, `MAIL_DAILY_LIMIT` |
+| **Inactivity reminders** | `NOTIFICATIONS_ENABLED` (the scheduler; mode is set in the console), `ADMIN_EMAIL` (experimental-mode fallback), `NOTIFICATIONS_TICK_SECONDS`, `NOTIFICATIONS_SEND_INTERVAL_SECONDS`, `ACTIVITY_TOUCH_SECONDS` |
 | **Guest access** | `GUEST_ENABLED`, `GUEST_TTL_SECONDS`, `GUEST_MAX_ACTIVE`, `GUEST_EMAIL_DOMAIN`, `GUEST_REAPER_INTERVAL_SECONDS`, `GUEST_BUDGET_CHAT`, `GUEST_BUDGET_QA`, `GUEST_BUDGET_SEARCH`, `GUEST_BUDGET_SESSIONS` |
 | **Init-db only** | `PG_ROOT_USER`, `PG_ROOT_PASSWORD`, `KEYCLOAK_SCHEMA`, `INITIALIZE_DB` |
 
@@ -541,7 +608,7 @@ Configuration is read from environment variables in `src/main.py` (`Config.setup
 
 ## Database Migrations
 
-Schema is versioned as **ordered, idempotent SQL** in `schemas/` (`10_…`, `20_…`, `30_…`, `40_…`). Every statement is `IF NOT EXISTS`, so applying the set is always safe to repeat.
+Schema is versioned as **ordered, idempotent SQL** in `schemas/` (`10_…` through `70_notifications.sql`). Every statement is `IF NOT EXISTS`, so applying the set is always safe to repeat.
 
 - **On a fresh database:** run the container with `INITIALIZE_DB=1` or `entrypoint.sh init-db`. It grants the Keycloak-schema privileges and applies **all** `schemas/*.sql` in filename order.
 - **On an already-initialized database:** the init path does **not** run on a normal container start. New `NN_*.sql` files must be **applied manually** against the live database (each is `IF NOT EXISTS`, so re-running the whole set is also safe).
@@ -557,7 +624,7 @@ pip install -r requirements.txt   # includes pytest + pytest-asyncio
 pytest
 ```
 
-`pytest.ini` sets `pythonpath = src` and `asyncio_mode = auto`. Current suites cover the guest reaper, the meal-plan library, saved items, observability normalisation, and RecipeWrangler identity forwarding (`tests/`). Coverage is still growing; entity-layer paths that need a live PostgreSQL are typically exercised against a throwaway container.
+`pytest.ini` sets `pythonpath = src` and `asyncio_mode = auto`. The `*_e2e.py` suites need a real PostgreSQL with the schemas applied, at the `POSTGRES_*` settings; a throwaway one is enough (`docker run --tmpfs /var/lib/postgresql/data ... postgres`, then apply `schemas/50_analytics.sql` and `schemas/70_notifications.sql`). Current suites cover the guest reaper, the meal-plan library, saved items, observability normalisation, and RecipeWrangler identity forwarding (`tests/`). Coverage is still growing; entity-layer paths that need a live PostgreSQL are typically exercised against a throwaway container.
 
 ---
 

@@ -1140,3 +1140,87 @@ class WebVital(Base):
     rating = mapped_column(String(20), nullable=True)
     navigation_type = mapped_column(String(16), nullable=True)
     device_type = mapped_column(String(16), nullable=True)
+
+
+# --- Inactivity reminders -----------------------------------------------------
+#
+# DDL lives in schemas/70_notifications.sql; these models must track that file.
+# Keyed by the Keycloak user id, like owner_id elsewhere, with no relationship
+# into the household tables: a reminder is about an account, not a member.
+
+
+class UserActivity(Base):
+    """When an account last used the platform, and in which language."""
+
+    __tablename__ = "user_activity"
+    __table_args__ = {"schema": "wisefood"}
+
+    user_id = mapped_column(String(100), primary_key=True)
+    last_seen_at = mapped_column(DateTime(timezone=True), nullable=False)
+    first_seen_at = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    locale = mapped_column(String(8), nullable=True)
+    estimated = mapped_column(Boolean, nullable=False, default=False)
+
+
+class NotificationPreference(Base):
+    """What one person has said about receiving reminder emails."""
+
+    __tablename__ = "notification_preference"
+    __table_args__ = {"schema": "wisefood"}
+
+    user_id = mapped_column(String(100), primary_key=True)
+    inactivity_reminders = mapped_column(Boolean, nullable=False, default=True)
+    unsubscribe_token = mapped_column(String(64), nullable=True, unique=True)
+    updated_at = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_via = mapped_column(String(16), nullable=True)
+
+
+class NotificationRun(Base):
+    """One reminder cycle: what it looked at and what it sent."""
+
+    __tablename__ = "notification_run"
+    __table_args__ = {"schema": "wisefood"}
+
+    id = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kind = mapped_column(String(32), nullable=False)
+    mode = mapped_column(String(16), nullable=False)
+    source = mapped_column(String(16), nullable=False)
+    run_date = mapped_column(Date, nullable=False)
+    triggered_by = mapped_column(String(100), nullable=True)
+    started_at = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    finished_at = mapped_column(DateTime(timezone=True), nullable=True)
+    stats = mapped_column(JSONB, nullable=False, default=dict)
+    error = mapped_column(Text, nullable=True)
+
+
+class NotificationLog(Base):
+    """One reminder, sent or attempted."""
+
+    __tablename__ = "notification_log"
+    __table_args__ = {"schema": "wisefood"}
+
+    id = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kind = mapped_column(String(32), nullable=False)
+    mode = mapped_column(String(16), nullable=False)
+    user_id = mapped_column(String(100), nullable=True)
+    recipient = mapped_column(String(255), nullable=True)
+    inactive_since = mapped_column(DateTime(timezone=True), nullable=True)
+    sequence = mapped_column(SmallInteger, nullable=True)
+    status = mapped_column(String(16), nullable=False)
+    attempts = mapped_column(SmallInteger, nullable=False, default=1)
+    error = mapped_column(Text, nullable=True)
+    run_id = mapped_column(BigInteger, nullable=True)
+    created_at = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    sent_at = mapped_column(DateTime(timezone=True), nullable=True)

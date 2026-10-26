@@ -2122,6 +2122,36 @@ class GuestClaim(BaseModel):
     last_name: str = Field(default="", max_length=100)
 
 
+class InactivityReminderConfigUpdate(BaseModel):
+    """The whole reminder configuration; `notifications.config` validates it."""
+
+    config: Dict[str, Any]
+
+
+class InactivityReminderTestSend(BaseModel):
+    """Where to send a sample reminder, and in which language."""
+
+    #: Defaults to the caller's own address.
+    to: Optional[EmailStr] = None
+    locale: Optional[Literal["en", "hu", "sl", "el"]] = None
+
+
+class NotificationPreferences(BaseModel):
+    """What one person has said about reminder emails."""
+
+    inactivity_reminders: bool = True
+    updated_at: Optional[datetime] = None
+    #: profile | email_link | list_header | admin
+    updated_via: Optional[str] = None
+    #: False for a guest, who has no real address to be reminded at, and when
+    #: the deployment has not applied the notifications schema yet.
+    applies: bool = True
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    inactivity_reminders: bool
+
+
 class InteractionIn(BaseModel):
     """One click, rage click, dead click, or scroll depth."""
 

@@ -65,6 +65,7 @@ async def purge_user(
         "chat_sessions_deleted": 0,
         "analytics_rows_anonymised": 0,
         "shares_removed": 0,
+        "notification_rows_removed": 0,
         "account_deleted": False,
         "failures": [],
     }
@@ -112,6 +113,15 @@ async def purge_user(
     except Exception:
         logger.warning("Erasure %s: share cleanup failed", user_id, exc_info=True)
         summary["failures"].append("shares")
+
+    try:
+        from notifications import preferences as notification_preferences
+
+        summary["notification_rows_removed"] = await notification_preferences.erase(user_id)
+    except Exception:
+        # The schema may not be applied; nothing was ever recorded then.
+        logger.warning("Erasure %s: notification cleanup failed", user_id, exc_info=True)
+        summary["failures"].append("notifications")
 
     try:
         summary["analytics_rows_anonymised"] = await anonymise_analytics(user_id)
