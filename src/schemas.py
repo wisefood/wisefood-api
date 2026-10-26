@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import EmailStr, BaseModel, Field, ConfigDict, field_validator, model_validator
 
+from allergens import ALLERGEN_FIELD_DESCRIPTION, normalize_allergen_names
+
 
 # ------- System Schemas -------
 class SearchSchema(BaseModel):
@@ -101,8 +103,19 @@ class RecipeRegionEnum(str, Enum):
 class HouseholdMemberProfileBase(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
     dietary_groups: Optional[List[DietaryGroupEnum]] = Field(default_factory=list)
-    allergies: Optional[List[str]] = Field(default_factory=list)
+    allergies: Optional[List[str]] = Field(
+        default_factory=list, description=ALLERGEN_FIELD_DESCRIPTION
+    )
     properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+    # The profile is a safety input: RecipeWrangler compares these strings
+    # exactly against its graph, so they are folded to the shared vocabulary
+    # here, where every writer (the UI, FoodChat's memory flow, the client
+    # library) passes through, instead of in each of them.
+    @field_validator("allergies", mode="after")
+    @classmethod
+    def _canonical_allergies(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return normalize_allergen_names(value)
 
 
 class HouseholdMemberProfileCreate(HouseholdMemberProfileBase):
@@ -112,8 +125,13 @@ class HouseholdMemberProfileCreate(HouseholdMemberProfileBase):
 class HouseholdMemberProfileUpdate(BaseModel):
     nutritional_preferences: Optional[Dict[str, Any]] = None
     dietary_groups: Optional[List[DietaryGroupEnum]] = None
-    allergies: Optional[List[str]] = None
+    allergies: Optional[List[str]] = Field(default=None, description=ALLERGEN_FIELD_DESCRIPTION)
     properties: Optional[Dict[str, Any]] = None
+
+    @field_validator("allergies", mode="after")
+    @classmethod
+    def _canonical_allergies(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return normalize_allergen_names(value)
 
 
 class HouseholdMemberProfileResponse(HouseholdMemberProfileBase):
@@ -810,7 +828,7 @@ class RecipeSearchRequest(BaseModel):
     question: str = Field(default="", description="Natural language recipe question")
     exclude_allergens: List[str] = Field(
         default_factory=list,
-        description="Allergen names to exclude (e.g., ['peanut', 'tree_nut'])"
+        description="Allergens to exclude. " + ALLERGEN_FIELD_DESCRIPTION,
     )
     diet_tags: List[str] = Field(
         default_factory=list,
@@ -877,6 +895,11 @@ class RecipeSearchRequest(BaseModel):
         description="Result offset, for paging a question search.",
     )
 
+    @field_validator("exclude_allergens", mode="after")
+    @classmethod
+    def _canonical_exclude_allergens(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return normalize_allergen_names(value)
+
 
 class RecipeDetailsBatchRequest(BaseModel):
     """Batch recipe-details lookup — resolves ids to slim cards with macros.
@@ -912,7 +935,7 @@ class RecipeParamSearchRequest(BaseModel):
     )
     exclude_allergens: List[str] = Field(
         default_factory=list,
-        description="Allergen names to exclude",
+        description="Allergens to exclude. " + ALLERGEN_FIELD_DESCRIPTION,
     )
     diet_tags: List[str] = Field(
         default_factory=list,
@@ -983,6 +1006,11 @@ class RecipeParamSearchRequest(BaseModel):
             "results. Requires the admin or expert role."
         ),
     )
+
+    @field_validator("exclude_allergens", mode="after")
+    @classmethod
+    def _canonical_exclude_allergens(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return normalize_allergen_names(value)
 
 
 class CatalogSearchRequest(BaseModel):
@@ -1120,7 +1148,7 @@ class RecipeCreateRequest(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Diet or recipe tags")
     allergens: List[str] = Field(
         default_factory=list,
-        description="User-supplied allergens to merge into the recipe graph",
+        description="User-supplied allergens to merge into the recipe graph. " + ALLERGEN_FIELD_DESCRIPTION,
     )
     protein_g: Optional[float] = Field(
         default=None,
@@ -1168,6 +1196,11 @@ class RecipeCreateRequest(BaseModel):
     def _normalize_region(cls, value: str) -> str:
         return value.strip().upper()
 
+    @field_validator("allergens", mode="after")
+    @classmethod
+    def _canonical_allergens(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return normalize_allergen_names(value)
+
 
 class RecipeCreateResponse(BaseModel):
     """Response payload for a created recipe."""
@@ -1198,7 +1231,7 @@ class RecipeUpdateRequest(BaseModel):
     )
     allergens: Optional[List[str]] = Field(
         default=None,
-        description="Updated allergen list",
+        description="Updated allergen list. " + ALLERGEN_FIELD_DESCRIPTION,
     )
     tags: Optional[List[str]] = Field(
         default=None,
@@ -1225,6 +1258,11 @@ class RecipeUpdateRequest(BaseModel):
         if all(value is None for value in mutable_fields):
             raise ValueError("At least one mutable recipe field must be provided")
         return self
+
+    @field_validator("allergens", mode="after")
+    @classmethod
+    def _canonical_allergens(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        return normalize_allergen_names(value)
 
 
 class RecipeUpdateResponse(BaseModel):
