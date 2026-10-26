@@ -261,7 +261,7 @@ def _slot_html(slot: str, dishes: Any) -> str:
         return ""
     return (
         f'<div style="margin:0 0 16px;padding:14px 16px 2px;border-radius:12px;background:{email_layout.PANEL_BG};'
-        f'border-left:3px solid {email_layout.BRAND_GREEN};">'
+        f'border:1px solid {email_layout.CARD_BORDER};border-left:3px solid {email_layout.BRAND_GREEN};">'
         f'<div style="font-family:{font};font-size:11px;letter-spacing:.08em;text-transform:uppercase;'
         f'color:{email_layout.MUTED};margin:0 0 8px;">{html.escape(slot)}</div>'
         + "".join(rows)

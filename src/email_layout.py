@@ -37,13 +37,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 BRAND = "#d53355"          # --brand, the console's primary
 BRAND_DARK = "#aa2944"     # --color-brand-600, links on white
 BRAND_GREEN = "#a6b52b"    # --brandg
-# White page, neutral greys: no warm tints. Gmail's apps and Outlook ignore
-# `color-scheme: light` and darken light colours in dark mode while keeping
-# their hue, so the site's warm cream (#f6efe6) arrived as a brown page.
-# Colourless greys darken to grey.
+# Every background is pure white; shapes are drawn with borders. Mail clients
+# in dark mode ignore `color-scheme: light` and repaint light backgrounds dark:
+# the site's warm cream (#f6efe6) arrived as a brown page, and a light grey box
+# (#f4f4f5) as a dark grey one with its bold title dark-on-dark. Pure white is
+# the one background the partial dark modes leave alone.
 PAGE_BG = "#ffffff"
 CARD_BORDER = "#e4e4e7"    # --ui-border (zinc-200)
-PANEL_BG = "#f4f4f5"       # a tinted box inside the card (zinc-100)
+PANEL_BG = "#ffffff"       # boxes inside the card: white, outlined by CARD_BORDER
 HEADING = "#1d2125"
 TEXT = "#3d4148"
 MUTED = "#80858d"
@@ -204,7 +205,7 @@ def render(
     )
 
     banner = (
-        f'<tr><td style="padding:14px 40px;background:#fff7e6;border-bottom:1px solid #f3dfb5;'
+        f'<tr><td style="padding:14px 40px;background:#ffffff;border-bottom:2px solid #f3dfb5;'
         f'border-radius:16px 16px 0 0;font-family:{FONT};font-size:13px;line-height:1.5;color:#7a5410;">'
         f"{banner_html}</td></tr>"
         if banner_html else ""

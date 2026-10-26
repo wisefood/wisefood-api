@@ -191,7 +191,7 @@ def render_reminder(
             '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
             'style="border-collapse:separate;">'
             f'<tr><td style="padding:12px 14px;background:{email_layout.PANEL_BG};border-radius:10px;'
-            f'border-left:3px solid {colour};font-family:{email_layout.FONT};font-size:14px;'
+            f'border:1px solid {email_layout.CARD_BORDER};border-left:3px solid {colour};font-family:{email_layout.FONT};font-size:14px;'
             f'line-height:1.5;color:{email_layout.TEXT};">'
             f'<strong style="color:{email_layout.HEADING};">{html.escape(app)}</strong><br>'
             f"{html.escape(text)}</td></tr></table></td></tr>"
