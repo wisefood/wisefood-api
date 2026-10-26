@@ -213,3 +213,86 @@ class TestCatalogPassthrough:
         assert paths.index("/catalog/{recipe_id}") == len(paths) - 1
         for static in ("facets", "browse", "vocabulary", "search"):
             assert f"/catalog/{static}" in paths
+
+
+class TestProfileForwarding:
+    """`annotate` has to travel schema -> route -> client -> payload like a filter.
+
+    RecipeWrangler defaults it to true, so a flag dropped anywhere along the
+    way still yields a successful profile — just one that charged a model call
+    the caller asked not to make.
+    """
+
+    def test_annotate_is_declared_and_defaults_on(self):
+        from schemas import RecipeProfileRequest
+
+        assert RecipeProfileRequest(raw_recipe="x").annotate is True
+        assert RecipeProfileRequest(raw_recipe="x", annotate=False).annotate is False
+
+    @pytest.mark.parametrize("annotate", [True, False])
+    def test_client_forwards_annotate_explicitly(self, rw_backend, monkeypatch, annotate):
+        import asyncio
+
+        sent = {}
+
+        async def fake_post(path, json=None, **_):
+            sent["path"] = path
+            sent["json"] = json
+            return {}
+
+        monkeypatch.setattr(rw_backend.RECIPEWRANGLER, "post", fake_post)
+        asyncio.run(
+            rw_backend.RECIPEWRANGLER.profile_recipe(raw_recipe="Soup", annotate=annotate)
+        )
+
+        assert sent["path"] == "/api/v1/recipes/profile"
+        assert sent["json"]["annotate"] is annotate
+
+
+class TestProfilePreferencesReachBothPaths:
+    """Likes on the browse path and dislikes on the question path.
+
+    Each had a field on one path only, so a member's preferences reached search
+    only when they typed a question (likes) or never (dislikes). The four-place
+    rule from the module docstring applies: schema, route, client signature,
+    payload dict.
+    """
+
+    def test_both_models_declare_the_new_fields(self):
+        from schemas import RecipeParamSearchRequest, RecipeSearchRequest
+
+        assert RecipeParamSearchRequest().preferred_ingredients == []
+        assert RecipeSearchRequest().exclude_ingredients == []
+
+    def test_client_forwards_liked_foods_on_param_search(self, rw_backend, monkeypatch):
+        import asyncio
+
+        sent = {}
+
+        async def fake_post(path, json=None, **_):
+            sent["path"], sent["json"] = path, json
+            return {}
+
+        monkeypatch.setattr(rw_backend.RECIPEWRANGLER, "post", fake_post)
+        asyncio.run(rw_backend.RECIPEWRANGLER.param_search_recipes(preferred_ingredients=["chicken"]))
+        assert sent["path"] == "/api/v1/recipes/param_search"
+        assert sent["json"]["preferred_ingredients"] == ["chicken"]
+
+    def test_client_forwards_disliked_foods_on_question_search(self, rw_backend, monkeypatch):
+        import asyncio
+
+        sent = {}
+
+        async def fake_post(path, json=None, **_):
+            sent["path"], sent["json"] = path, json
+            return {}
+
+        monkeypatch.setattr(rw_backend.RECIPEWRANGLER, "post", fake_post)
+        asyncio.run(rw_backend.RECIPEWRANGLER.search_recipes(question="dinner", exclude_ingredients=["mushrooms"]))
+        assert sent["path"] == "/api/v1/recipes/search"
+        assert sent["json"]["exclude_ingredients"] == ["mushrooms"]
+
+        sent.clear()
+        asyncio.run(rw_backend.RECIPEWRANGLER.search_recipes(question="dinner"))
+        assert "exclude_ingredients" not in sent["json"], "an empty list is not a constraint"
+

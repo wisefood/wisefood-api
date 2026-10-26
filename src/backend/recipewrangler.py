@@ -244,6 +244,7 @@ class RecipeWrangler:
         include_disabled: bool = False,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        exclude_ingredients: list[str] = None,
         **filters,
     ):
         """Search recipes via the knowledge graph."""
@@ -253,6 +254,8 @@ class RecipeWrangler:
             "diet_tags": diet_tags or [],
             "preferred_ingredients": preferred_ingredients or [],
         }
+        if exclude_ingredients:
+            payload["exclude_ingredients"] = exclude_ingredients
         # Only sent when the caller asked for them, so an unpaged client keeps
         # getting RecipeWrangler's own defaults rather than ours.
         if limit is not None:
@@ -279,6 +282,7 @@ class RecipeWrangler:
         diet_tags: list[str] = None,
         sources: list[str] = None,
         dish_types: list[str] = None,
+        preferred_ingredients: list[str] = None,
         max_duration_minutes: Optional[int] = None,
         limit: int = 10,
         offset: int = 0,
@@ -293,6 +297,7 @@ class RecipeWrangler:
             "exclude_ingredients": exclude_ingredients or [],
             "exclude_allergens": exclude_allergens or [],
             "diet_tags": diet_tags or [],
+            "preferred_ingredients": preferred_ingredients or [],
             "sources": sources or [],
             "dish_types": dish_types or [],
             "max_duration_minutes": max_duration_minutes,
@@ -314,12 +319,19 @@ class RecipeWrangler:
         region: Optional[str] = None,
         persist_trace: bool = False,
         parse_only: bool = False,
+        annotate: bool = True,
     ):
-        """Run parsing + profiling pipeline on raw recipe text."""
+        """Run parsing + profiling pipeline on raw recipe text.
+
+        ``annotate`` is forwarded explicitly rather than left to the upstream
+        default: a flag missing from this payload reaches RecipeWrangler as
+        "annotate", so a client that opted out would still pay for the call.
+        """
         payload = {
             "raw_recipe": raw_recipe,
             "persist_trace": persist_trace,
             "parse_only": parse_only,
+            "annotate": annotate,
         }
         if region is not None:
             payload["region"] = region

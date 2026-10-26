@@ -237,6 +237,7 @@ async def search_recipes(
         exclude_allergens=payload.exclude_allergens,
         diet_tags=payload.diet_tags,
         preferred_ingredients=payload.preferred_ingredients,
+        exclude_ingredients=payload.exclude_ingredients,
         region=payload.region,
         include_disabled=payload.include_disabled,
         limit=payload.limit,
@@ -270,6 +271,7 @@ async def param_search_recipes(
         exclude_ingredients=payload.exclude_ingredients,
         exclude_allergens=payload.exclude_allergens,
         diet_tags=payload.diet_tags,
+        preferred_ingredients=payload.preferred_ingredients,
         sources=payload.sources,
         dish_types=payload.dish_types,
         max_duration_minutes=payload.max_duration_minutes,
@@ -333,6 +335,7 @@ async def profile_recipe(payload: RecipeProfileRequest, request: Request):
         region=payload.region,
         persist_trace=payload.persist_trace,
         parse_only=payload.parse_only,
+        annotate=payload.annotate,
     )
 
 

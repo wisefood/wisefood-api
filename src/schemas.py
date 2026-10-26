@@ -761,6 +761,15 @@ class RecipeProfileRequest(BaseModel):
             "pre-populated ingredients, instructions, duration, serves, allergens, and tags"
         ),
     )
+    annotate: bool = Field(
+        default=True,
+        description=(
+            "Also return the model-suggested course_types, cuisines, "
+            "flavor_profiles and moods (plus annotation_confidence), under the "
+            "same names the catalog index uses. False skips that model call; "
+            "a failed call sets annotations_warning instead of the facets."
+        ),
+    )
 
 
 class RecipeProfileResponse(BaseModel):
@@ -810,6 +819,10 @@ class RecipeSearchRequest(BaseModel):
     preferred_ingredients: List[str] = Field(
         default_factory=list,
         description="Soft preference boosts from the member profile — reorder results, never filter"
+    )
+    exclude_ingredients: List[str] = Field(
+        default_factory=list,
+        description="Ingredient names that must not appear, e.g. the member's disliked foods; a hard filter",
     )
     region: Optional[str] = Field(
         default=None,
@@ -904,6 +917,13 @@ class RecipeParamSearchRequest(BaseModel):
     diet_tags: List[str] = Field(
         default_factory=list,
         description="Diet tags to enforce (e.g., vegan, gluten_free)",
+    )
+    preferred_ingredients: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Soft preference boosts, e.g. the member's liked foods: recipes naming one "
+            "rank higher, none are filtered out; an explicit sort_by wins"
+        ),
     )
     sources: List[str] = Field(
         default_factory=list,
