@@ -2287,6 +2287,25 @@ class AnalyticsConsentStatus(BaseModel):
     mode: str = Field(description="'opt_in' or 'opt_out' — how silence is read")
 
 
+class ConsentAcceptance(BaseModel):
+    """Accepting the terms, which covers every purpose they name at once."""
+
+    version: str = Field(
+        min_length=1, max_length=16,
+        description="Version of the terms text the user was shown",
+    )
+
+
+class ConsentPurposeUpdate(BaseModel):
+    """Withdrawing, or giving again, one purpose on its own."""
+
+    enabled: bool = Field(description="True to allow, False to withdraw")
+    version: str = Field(
+        min_length=1, max_length=16,
+        description="Version of the terms text the user was shown",
+    )
+
+
 class FeedbackStatusUpdate(BaseModel):
     """Where a piece of feedback sits in the triage workflow."""
 

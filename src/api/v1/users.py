@@ -2,10 +2,11 @@
 User-scoped entity operations (Keycloak users, keyed by the token `sub`
 claim — NOT household members).
 
-Currently hosts the GDPR-style user consent ledger. The recorded consent
-covers cookies and the processing of personal information solely for the
-provision of the service (purpose limitation), and is stored append-only so
-the trail stays auditable.
+Currently hosts the GDPR-style user consent ledger, stored append-only so the
+trail stays auditable. Terms up to 1.0 covered cookies and the processing of
+personal information for the provision of the service; from 2.0 one
+acceptance also covers activity attribution and research use, each recorded
+as its own row and withdrawable on its own (see `consents.py`).
 """
 from typing import Any, Dict, Optional
 

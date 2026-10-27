@@ -17,11 +17,13 @@ from fastapi import APIRouter, Depends, Query, Request
 
 import kutils
 from auth import auth
-from exceptions import InternalError
+from exceptions import DataError, InternalError
 from routers.generic import render
 from schemas import (
     AnalyticsConsentStatus,
     AnalyticsConsentUpdate,
+    ConsentAcceptance,
+    ConsentPurposeUpdate,
     UserConsentCreate,
     UserConsentRecord,
     UserConsentStatus,
@@ -303,6 +305,101 @@ async def api_set_my_analytics_consent(
         decided_at=consent["granted_at"],
         mode=consent_mode(),
     )
+
+
+@router.get(
+    "/me/consents",
+    dependencies=[Depends(auth())],
+    summary="Everything this user has agreed to, in one answer",
+)
+@render()
+async def api_get_my_consents(request: Request):
+    """The terms, whether they are the current ones, and each purpose.
+
+    One consent covers running the service, naming the person on their
+    activity, and using their conversations — with identifying details
+    removed — to test WiseFood. The last two can each be withdrawn on their
+    own, so the answer lists them separately.
+    """
+    import consents
+    from analytics import consent_mode
+
+    user_id = kutils.current_user(request)["sub"]
+    result = await consents.status(user_id, analytics_silence=consent_mode() == "opt_out")
+    result["purposes"]["analytics"]["mode"] = consent_mode()
+    # A guest is never asked about research and can never give it: their data
+    # is promised to expire.
+    result["purposes"]["research"]["available"] = not _is_guest_request(request)
+    return result
+
+
+@router.post(
+    "/me/consents",
+    dependencies=[Depends(auth())],
+    summary="Accept the terms, and with them every purpose they name",
+)
+@render()
+async def api_accept_my_consents(request: Request, body: ConsentAcceptance):
+    """One click, one transaction, one row per purpose in the ledger.
+
+    A guest accepts the service and analytics only; the banner they are shown
+    says so.
+    """
+    import consents
+    from analytics import CONSENT, consent_mode
+
+    user_id = kutils.current_user(request)["sub"]
+    purposes = [p for p in consents.PURPOSES if p != "research" or not _is_guest_request(request)]
+    await consents.accept_all(
+        user_id, body.version, ip_address=client_ip(request), purposes=purposes
+    )
+    CONSENT.invalidate(user_id)
+    result = await consents.status(user_id, analytics_silence=consent_mode() == "opt_out")
+    result["purposes"]["analytics"]["mode"] = consent_mode()
+    result["purposes"]["research"]["available"] = not _is_guest_request(request)
+    return result
+
+
+@router.put(
+    "/me/consents/{purpose}",
+    dependencies=[Depends(auth())],
+    summary="Withdraw, or give again, one purpose",
+)
+@render()
+async def api_set_my_consent_purpose(
+    request: Request, purpose: str, body: ConsentPurposeUpdate
+):
+    """The profile switches. Takes effect on the next recorded action."""
+    import consents
+    from analytics import CONSENT, consent_mode
+
+    if purpose not in consents.PURPOSES:
+        raise DataError(detail=f"Unknown purpose '{purpose}'")
+    if purpose == "research" and body.enabled and _is_guest_request(request):
+        raise DataError(
+            detail="A guest session cannot be used for research: it is deleted when it expires."
+        )
+    user_id = kutils.current_user(request)["sub"]
+    grant, withdraw = consents.PURPOSES[purpose]
+    await USER_CONSENT.record_consent(
+        user_id=user_id,
+        version=body.version,
+        consent_type=grant if body.enabled else withdraw,
+        ip_address=client_ip(request),
+    )
+    if purpose == "analytics":
+        CONSENT.invalidate(user_id)
+    result = await consents.status(user_id, analytics_silence=consent_mode() == "opt_out")
+    result["purposes"]["analytics"]["mode"] = consent_mode()
+    result["purposes"]["research"]["available"] = not _is_guest_request(request)
+    return result
+
+
+def _is_guest_request(request: Request) -> bool:
+    """Whether the caller is a guest, from the token the gateway verified."""
+    import context
+
+    return context.is_guest()
 
 
 @router.get(

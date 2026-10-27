@@ -381,6 +381,7 @@ from routers.observability import router as observability_router
 from routers.users import router as users_router
 from routers.analytics import router as analytics_router
 from routers.notifications import router as notifications_router
+from routers.research import router as research_router
 
 api.include_router(households_router)
 api.include_router(household_members_router)
@@ -395,6 +396,7 @@ api.include_router(observability_router)
 api.include_router(users_router)
 api.include_router(analytics_router)
 api.include_router(notifications_router)
+api.include_router(research_router)
 
 if __name__ == "__main__":
     # Run Uvicorn programmatically using the configuration
