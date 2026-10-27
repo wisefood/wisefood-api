@@ -411,7 +411,7 @@ async def api_list_member_adapted_recipes(
     "/{member_id}/adapted-recipes/{recipe_id}",
     dependencies=[Depends(auth())],
     summary="Get a member's adaptation of one recipe",
-    description="Get a household member's saved adaptation of a specific recipe. 404 if the member has not saved one. User must be the household owner or admin.",
+    description="Get a household member's saved adaptation of a specific recipe. `result` is null if the member has not saved one. User must be the household owner or admin.",
 )
 @render()
 async def api_get_member_adapted_recipe(
@@ -419,12 +419,18 @@ async def api_get_member_adapted_recipe(
     member_id: str,
     recipe_id: str = Path(..., min_length=1, max_length=128, description="Original opaque RecipeWrangler recipe id"),
 ):
-    """Get a member's adaptation of one recipe. User must have access."""
+    """Get a member's adaptation of one recipe, or null. User must have access.
+
+    Null, not 404. The recipe page asks on every view, and most recipes have
+    no saved adaptation — a 404 for that made every one of those views a
+    failed request, and Service health reported the route as 100% failing
+    when nothing was wrong.
+    """
     await verify_access(request, None, member_id)
 
     adapted = await HOUSEHOLD_MEMBER.get_adapted_recipe(member_id, recipe_id)
     if adapted is None:
-        raise NotFoundError(detail=f"No adapted recipe saved for '{recipe_id}'")
+        return None
     return MemberAdaptedRecipeResponse(**adapted)
 
 

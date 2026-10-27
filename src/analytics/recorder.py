@@ -362,6 +362,28 @@ def _prop_is_safe(key: str, value: Any) -> bool:
     return isinstance(value, str) and bool(_ROUTE_PATTERN.match(value))
 
 
+#: What a control is, as the browser reports its role. A label is kept only
+#: for one of these, or for a key a developer named with `data-track`.
+_CONTROL_ROLES = frozenset({
+    "button", "a", "link", "input", "select", "textarea", "option", "summary",
+    "label", "menuitem", "tab", "switch", "checkbox", "radio",
+})
+
+
+def label_allowed(role: Optional[str], key: Optional[str]) -> bool:
+    """Whether a click's label may be kept and shown.
+
+    Browsers before the fix sent the words of whatever was clicked, and on a
+    chat page that was a person's message, a plan line, a household member's
+    name. A control's own name is fine; text is not. Checked on the way in,
+    and again on the way out, so labels recorded before the fix stop showing.
+    """
+    if (role or "").strip().lower() in _CONTROL_ROLES:
+        return True
+    # A developer-named key ("foodchat.splitter") has no structural path.
+    return bool(key) and ">" not in key and " " not in key
+
+
 def _redact_label(value: Optional[str]) -> Optional[str]:
     """A control's own words, with anything that looks personal taken out."""
     if not value:
@@ -1134,7 +1156,11 @@ class ActivityRecorder:
                         # chrome, but nothing stops a page putting a name in
                         # an aria-label, and this column is readable by
                         # everyone with console access.
-                        "element_label": _redact_label(element_label),
+                        "element_label": (
+                            _redact_label(element_label)
+                            if label_allowed(element_role, element_key)
+                            else None
+                        ),
                         "element_role": (element_role or None) and str(element_role)[:32],
                         "page_path": (page_path or None) and str(page_path)[:255],
                         "x_pct": _clamp_pct(x_pct),

@@ -19,9 +19,23 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import Numeric, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 
+from analytics.recorder import label_allowed
+
 logger = logging.getLogger(__name__)
 
 MAX_TIMELINE = 500
+
+#: What separates a click's area from the rest of its key — the browser writes
+#: `foodchat.plan › div.px-3>span` for a click inside a named part of a page.
+AREA_SEPARATOR = " › "
+
+
+def _area_of(key: Optional[str]) -> Optional[str]:
+    """The named part of the page a click was in, or None for an unmarked one."""
+    if key and AREA_SEPARATOR in key:
+        return key.split(AREA_SEPARATOR, 1)[0] or None
+    return None
+
 
 #: Rating values that count as a complaint. Spelled once: the same list was
 #: written out at five call sites, so adding a scale meant remembering all five.
@@ -3718,6 +3732,21 @@ async def audience_breakdown(*, days: int = 30, since: Optional[str] = None, unt
         by_client = await group(db, ActivityEvent.client)
         by_locale = await group(db, ActivityEvent.locale)
 
+        # Where traffic with no client label comes from. "Unattributed" alone
+        # was a fifth of all activity and no way to find out what it was; the
+        # route and event type say whether it is a page of ours that forgot
+        # its headers, an old SDK, or somebody else entirely.
+        route = sqlfunc.coalesce(ActivityEvent.route, ActivityEvent.event_type)
+        unlabelled = (
+            await db.execute(
+                select(route, ActivityEvent.event_type, sqlfunc.count())
+                .where(in_window, ActivityEvent.client.is_(None))
+                .group_by(route, ActivityEvent.event_type)
+                .order_by(sqlfunc.count().desc())
+                .limit(15)
+            )
+        ).all()
+
         # roles is a text[]; unnest so one event held by an expert counts once
         # against "expert" rather than once against the whole array. Expanded
         # in a subquery rather than joined laterally in place — the aggregate
@@ -3782,6 +3811,9 @@ async def audience_breakdown(*, days: int = 30, since: Optional[str] = None, unt
     return {
         **window,
         "by_client": by_client,
+        "unattributed_routes": [
+            {"route": r, "event_type": t, "events": int(n)} for r, t, n in unlabelled
+        ],
         "by_locale": by_locale,
         "by_role": [
             {"role": r, "users": int(u), "events": int(n)} for r, u, n in by_role
@@ -4250,6 +4282,8 @@ async def session_device(session_id: str) -> Optional[Dict[str, Any]]:
                     UIInteraction.path,
                     UIInteraction.element_key,
                     func.sum(UIInteraction.repeats),
+                    func.max(UIInteraction.element_label),
+                    func.max(UIInteraction.element_role),
                 )
                 .where(
                     UIInteraction.client_session_id == session_id,
@@ -4275,8 +4309,13 @@ async def session_device(session_id: str) -> Optional[Dict[str, Any]]:
         # that does nothing. The clearest signal of frustration the platform
         # can record, and the reason to open a session at all.
         "frustration": [
-            {"kind": k, "path": p, "element_key": e, "clicks": int(n or 0)}
-            for k, p, e, n in trouble
+            {
+                "kind": k, "path": p, "element_key": e, "clicks": int(n or 0),
+                "element_label": label if label_allowed(role, e) else None,
+                "element_role": role,
+                "area": _area_of(e),
+            }
+            for k, p, e, n, label, role in trouble
         ],
     }
 
@@ -4622,6 +4661,30 @@ async def click_map(
             )
         ).one()
 
+        # Clicks per named part of the page. On a page that changes as it is
+        # used — a conversation, an open plan — no single rendering can hold
+        # every click, and "the plan panel took 60 clicks, 30 of them on
+        # nothing" is the reading that survives. NULL is the unmarked rest.
+        area = func.nullif(
+            func.split_part(UIInteraction.element_key, AREA_SEPARATOR, 1),
+            UIInteraction.element_key,
+        )
+        by_area = (
+            await db.execute(
+                select(
+                    area,
+                    func.coalesce(func.sum(UIInteraction.repeats), 0),
+                    func.count(func.distinct(UIInteraction.client_session_id)),
+                    func.count().filter(UIInteraction.kind == "rage"),
+                    func.count().filter(UIInteraction.kind == "dead"),
+                )
+                .where(*filters, UIInteraction.element_key.isnot(None))
+                .group_by(area)
+                .order_by(func.coalesce(func.sum(UIInteraction.repeats), 0).desc())
+                .limit(20)
+            )
+        ).all()
+
         # Clicks per screen size, whatever size is selected. A phone and a
         # laptop lay the same page out differently, so a map pooled across
         # both puts heat on neither layout; the console uses this to open on
@@ -4681,6 +4744,16 @@ async def click_map(
         "example_paths": [row[0] for row in examples if row[0]],
         "grid": cells,
         "rows": row_cells,
+        "areas": [
+            {
+                "area": name,
+                "clicks": int(n or 0),
+                "sessions": int(sess or 0),
+                "rage": int(rage or 0),
+                "dead": int(dead or 0),
+            }
+            for name, n, sess, rage, dead in by_area
+        ],
         "by_device": {
             "phone": int(sizes[0] or 0),
             "tablet": int(sizes[1] or 0),
@@ -4716,8 +4789,9 @@ async def click_map(
         "elements": [
             {
                 "element_key": key,
-                "element_label": label or None,
+                "element_label": (label or None) if label_allowed(role, key) else None,
                 "element_role": role,
+                "area": _area_of(key),
                 "clicks": int(n or 0),
                 "sessions": int(s or 0),
                 "rage": int(rage or 0),
@@ -4782,6 +4856,8 @@ async def interaction_overview(
                     UIInteraction.kind,
                     func.count(),
                     func.count(func.distinct(UIInteraction.client_session_id)),
+                    func.max(UIInteraction.element_label),
+                    func.max(UIInteraction.element_role),
                 )
                 .where(in_window, UIInteraction.kind.in_(("rage", "dead")))
                 .group_by(UIInteraction.path, UIInteraction.element_key, UIInteraction.kind)
@@ -4809,11 +4885,14 @@ async def interaction_overview(
             {
                 "path": path,
                 "element_key": element,
+                "element_label": label if label_allowed(role, element) else None,
+                "element_role": role,
+                "area": _area_of(element),
                 "kind": kind,
                 "count": int(n),
                 "sessions": int(s or 0),
             }
-            for path, element, kind, n, s in worst
+            for path, element, kind, n, s, label, role in worst
         ],
     }
 
