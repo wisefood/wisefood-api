@@ -27,6 +27,349 @@ MAX_TIMELINE = 500
 #: written out at five call sites, so adding a scale meant remembering all five.
 _NEGATIVE_VALUES = ("down", "not_helpful", "bad", "awful")
 
+#: Search surfaces that are not somebody looking for something. `qa` is the
+#: retrieval behind a FoodScholar question, `tools` is FoodChat looking up
+#: recipes on a member's behalf, and `autocomplete` is one row per keystroke.
+#: Counted as searches, they turned one question into a search, one chat turn
+#: into three, and one typed word into eight.
+_NOT_PERSON_SEARCHES = ("qa", "tools", "autocomplete")
+
+#: The product events a session's journey is read from. Bounded by type
+#: rather than read whole, because `http.request` is most of any session and
+#: tells this view nothing the timeline does not.
+_JOURNEY_EVENTS = (
+    "chat.turn",
+    "chat.plan_generated",
+    "chat.plan_saved",
+    "qa.ask",
+    "qa.answered",
+    "qa.citation_opened",
+    "recipe.view",
+    "recipe.result_click",
+    "recipe.compare",
+    "favorite.add",
+    "favorite.remove",
+)
+
+#: Steps a journey keeps per conversation before saying how many it left out.
+MAX_JOURNEY_STEPS = 200
+
+
+def _collapse(sequence: List[Optional[str]]) -> List[Dict[str, Any]]:
+    """A run of the same step as one step with a count.
+
+    "refine, refine, refine" is one thing somebody did three times, and
+    spelled out it pushes the step after it — the one that says whether the
+    refining worked — off the end of a row.
+    """
+    out: List[Dict[str, Any]] = []
+    for step in sequence:
+        name = step or "unknown"
+        if out and out[-1]["step"] == name:
+            out[-1]["repeats"] += 1
+        else:
+            out.append({"step": name, "repeats": 1})
+    return out
+
+
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() if value else None
+
+
+def _build_journey(
+    events: List[Dict[str, Any]],
+    searches: List[Dict[str, Any]],
+    llm_by_request: Dict[str, Dict[str, Any]],
+    feedback: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """What one session did in each product, as steps rather than rows.
+
+    The timeline answers "what requests were made". This answers the question
+    somebody reading a session actually has: what did they try to do, and did
+    it work. A FoodChat conversation becomes its turns in order, each with the
+    intent it was routed to, whether it failed, the plan it produced and the
+    lookups and model calls it took. A FoodScholar visit becomes its questions
+    with their answers' provenance and rating. Recipe search becomes counts
+    of searching, opening and keeping.
+
+    No text a member typed into chat appears here: FoodChat never reports it.
+    A question's words appear only where the gateway kept them — for people
+    who agreed, while capture of typed text is on — exactly as on the search
+    list.
+
+    Pure, so the shaping can be tested without a database.
+    """
+    turns_by_request: Dict[str, Dict[str, Any]] = {}
+    conversation_by_request: Dict[str, Dict[str, Any]] = {}
+    conversations: Dict[str, Dict[str, Any]] = {}
+
+    def conversation(conversation_id: str, at: Optional[datetime]) -> Dict[str, Any]:
+        found = conversations.get(conversation_id)
+        if found is None:
+            found = conversations[conversation_id] = {
+                "conversation_id": conversation_id,
+                "started_at": at,
+                "ended_at": at,
+                "turns": 0,
+                "failed_turns": 0,
+                "busy_turns": 0,
+                "plans_generated": 0,
+                "plans_refined": 0,
+                "plans_saved": 0,
+                "lookups": 0,
+                "llm_calls": 0,
+                "cost_usd": 0.0,
+                "steps": [],
+                "_intents": [],
+            }
+        if at is not None:
+            if found["started_at"] is None or at < found["started_at"]:
+                found["started_at"] = at
+            if found["ended_at"] is None or at > found["ended_at"]:
+                found["ended_at"] = at
+        return found
+
+    # Turns first, so a plan or a lookup reported during a turn — which
+    # arrives *before* the turn's own row, because the turn reports when it
+    # finishes — can be hung on the turn that produced it.
+    for event in events:
+        if event["event_type"] != "chat.turn":
+            continue
+        props = event.get("props") or {}
+        conv = conversation(str(props.get("session_id") or "unknown"), event.get("occurred_at"))
+        outcome = props.get("outcome") or "ok"
+        model = llm_by_request.get(event.get("request_id") or "", {})
+        step = {
+            "kind": "turn",
+            "occurred_at": _iso(event.get("occurred_at")),
+            "intent": props.get("intent"),
+            "outcome": outcome,
+            "opening_turn": bool(props.get("opening_turn")),
+            "latency_ms": props.get("latency_ms"),
+            "llm_calls": int(model.get("calls") or 0),
+            "cost_usd": model.get("cost_usd"),
+            "plan": None,
+            "lookups": [],
+        }
+        conv["turns"] += 1
+        conv["failed_turns"] += 1 if outcome == "error" else 0
+        conv["busy_turns"] += 1 if outcome == "busy" else 0
+        conv["llm_calls"] += step["llm_calls"]
+        conv["cost_usd"] += float(model.get("cost_usd") or 0)
+        conv["steps"].append(step)
+        # A refused or failed turn routed nowhere; it is still a step the
+        # person took, and the one most worth seeing in a path.
+        conv["_intents"].append(
+            props.get("intent") if outcome == "ok" else outcome
+        )
+        if event.get("request_id"):
+            turns_by_request[event["request_id"]] = step
+            conversation_by_request[event["request_id"]] = conv
+
+    for event in events:
+        kind = event["event_type"]
+        if kind not in ("chat.plan_generated", "chat.plan_saved"):
+            continue
+        props = event.get("props") or {}
+        conv = conversation(str(props.get("session_id") or "unknown"), event.get("occurred_at"))
+        if kind == "chat.plan_generated":
+            plan = {
+                "plan_id": props.get("plan_id"),
+                "plan_type": props.get("plan_type"),
+                "version": props.get("version"),
+                "refinement": bool(props.get("refinement")),
+                "item_count": props.get("item_count"),
+            }
+            conv["plans_generated"] += 1
+            conv["plans_refined"] += 1 if plan["refinement"] else 0
+            turn = turns_by_request.get(event.get("request_id") or "")
+            if turn is not None and turn["plan"] is None:
+                turn["plan"] = plan
+            else:
+                conv["steps"].append({
+                    "kind": "plan_generated",
+                    "occurred_at": _iso(event.get("occurred_at")),
+                    **plan,
+                })
+        else:
+            conv["plans_saved"] += 1
+            conv["steps"].append({
+                "kind": "plan_saved",
+                "occurred_at": _iso(event.get("occurred_at")),
+                "plan_id": props.get("plan_id"),
+            })
+            conv["_intents"].append("saved")
+
+    # FoodChat's recipe lookups: hung on their turn by request, so a turn that
+    # produced no plan can be seen to have searched and found nothing.
+    for row in searches:
+        if row.get("surface") != "tools":
+            continue
+        turn = turns_by_request.get(row.get("request_id") or "")
+        if turn is None:
+            continue
+        turn["lookups"].append({
+            "query": row.get("query"),
+            "results": row.get("results"),
+            "zero_result": bool(row.get("zero_result")),
+            "relaxed": bool(row.get("relaxed")),
+        })
+        conversation_by_request[row["request_id"]]["lookups"] += 1
+
+    chat_ratings = [row for row in feedback if row.get("target_type") == "chat_message"]
+
+    conversation_rows = []
+    for conv in sorted(
+        conversations.values(),
+        key=lambda c: c["started_at"] or datetime.min.replace(tzinfo=timezone.utc),
+    ):
+        steps = sorted(conv["steps"], key=lambda s: s.get("occurred_at") or "")
+        conversation_rows.append({
+            **{k: v for k, v in conv.items() if not k.startswith("_") and k != "steps"},
+            "started_at": _iso(conv["started_at"]),
+            "ended_at": _iso(conv["ended_at"]),
+            "cost_usd": round(conv["cost_usd"], 6),
+            "path": _collapse(conv["_intents"]),
+            "steps": steps[:MAX_JOURNEY_STEPS],
+            "steps_truncated": len(steps) > MAX_JOURNEY_STEPS,
+        })
+
+    # FoodScholar: a question is its retrieval, its answer, or both, joined on
+    # the request. Either can be missing — retrieval is skipped with RAG off,
+    # and the answer event is not sent when saving the answer failed — and a
+    # question with only one half is still a question somebody asked.
+    questions: Dict[str, Dict[str, Any]] = {}
+    unkeyed: List[Dict[str, Any]] = []
+
+    def question(request_id: Optional[str], at: Optional[datetime]) -> Dict[str, Any]:
+        blank = {
+            "occurred_at": _iso(at),
+            "question": None,
+            "mode": None,
+            "language": None,
+            "cache_hit": None,
+            "confidence": None,
+            "articles_consulted": None,
+            "sources_found": None,
+            "latency_ms": None,
+            "qa_request_id": None,
+            "rating": None,
+            "answered": False,
+        }
+        if not request_id:
+            unkeyed.append(blank)
+            return blank
+        return questions.setdefault(request_id, blank)
+
+    for row in searches:
+        if row.get("surface") != "qa":
+            continue
+        q = question(row.get("request_id"), row.get("occurred_at_dt"))
+        q["question"] = row.get("query")
+        q["sources_found"] = row.get("results")
+        q["latency_ms"] = row.get("latency_ms")
+
+    for event in events:
+        if event["event_type"] != "qa.answered":
+            continue
+        props = event.get("props") or {}
+        q = question(event.get("request_id"), event.get("occurred_at"))
+        q.update({
+            "answered": True,
+            "mode": props.get("mode"),
+            "language": props.get("language"),
+            "cache_hit": props.get("cache_hit"),
+            "confidence": props.get("confidence"),
+            "articles_consulted": props.get("articles_consulted"),
+            "qa_request_id": props.get("qa_request_id"),
+        })
+        if q["occurred_at"] is None:
+            q["occurred_at"] = _iso(event.get("occurred_at"))
+
+    ratings = {
+        str(row.get("target_id")): row
+        for row in feedback
+        if row.get("target_type") == "qa_answer" and row.get("target_id")
+    }
+    question_rows = sorted(
+        list(questions.values()) + unkeyed, key=lambda q: q.get("occurred_at") or ""
+    )
+    for q in question_rows:
+        rated = ratings.get(str(q.get("qa_request_id") or ""))
+        if rated:
+            q["rating"] = rated.get("rating_value")
+
+    asked_in_browser = sum(1 for e in events if e["event_type"] == "qa.ask")
+
+    def count(kind: str) -> int:
+        return sum(1 for e in events if e["event_type"] == kind)
+
+    person_searches = [
+        row for row in searches if row.get("surface") not in _NOT_PERSON_SEARCHES
+    ]
+    searched_then_opened = False
+    first_search = min(
+        (row.get("occurred_at_dt") for row in person_searches if row.get("occurred_at_dt")),
+        default=None,
+    )
+    if first_search is not None:
+        searched_then_opened = any(
+            e["event_type"] in ("recipe.view", "recipe.result_click")
+            and e.get("occurred_at") and e["occurred_at"] >= first_search
+            for e in events
+        )
+
+    return {
+        "foodchat": {
+            "conversations": conversation_rows,
+            "totals": {
+                "conversations": len(conversation_rows),
+                "turns": sum(c["turns"] for c in conversation_rows),
+                "failed_turns": sum(c["failed_turns"] for c in conversation_rows),
+                "busy_turns": sum(c["busy_turns"] for c in conversation_rows),
+                "plans_generated": sum(c["plans_generated"] for c in conversation_rows),
+                "plans_refined": sum(c["plans_refined"] for c in conversation_rows),
+                "plans_saved": sum(c["plans_saved"] for c in conversation_rows),
+                "lookups": sum(c["lookups"] for c in conversation_rows),
+                "rated_up": sum(1 for r in chat_ratings if r.get("rating_value") == "up"),
+                "rated_down": sum(
+                    1 for r in chat_ratings if r.get("rating_value") in _NEGATIVE_VALUES
+                ),
+            },
+        },
+        "foodscholar": {
+            "questions": question_rows[:MAX_JOURNEY_STEPS],
+            "totals": {
+                # The browser's own count as a floor: a question whose answer
+                # never came back reported nothing from the service side.
+                "questions": max(len(question_rows), asked_in_browser),
+                "answered": sum(1 for q in question_rows if q["answered"]),
+                "from_cache": sum(1 for q in question_rows if q.get("cache_hit")),
+                "rated": sum(1 for q in question_rows if q.get("rating")),
+                "rated_negative": sum(
+                    1 for q in question_rows if q.get("rating") in _NEGATIVE_VALUES
+                ),
+                "citations_opened": count("qa.citation_opened"),
+            },
+        },
+        "recipes": {
+            "totals": {
+                "searches": len(person_searches),
+                "found_nothing": sum(1 for row in person_searches if row.get("zero_result")),
+                "loosened": sum(1 for row in person_searches if row.get("relaxed")),
+                "suggestions": sum(
+                    1 for row in searches if row.get("surface") == "autocomplete"
+                ),
+                "results_opened": count("recipe.result_click"),
+                "recipes_viewed": count("recipe.view"),
+                "compared": count("recipe.compare"),
+                "favourited": count("favorite.add"),
+                "unfavourited": count("favorite.remove"),
+                "searched_then_opened": searched_then_opened,
+            },
+        },
+    }
+
 
 
 async def session_summary(
@@ -125,11 +468,16 @@ async def session_summary(
             )
         ).all()
 
+        # What the person searched for, apart from the rows that only look like
+        # searches: a question's retrieval, FoodChat's own lookups and one row
+        # per keystroke of autocomplete. Each has its own place on the page.
+        person_search = SearchQuery.surface.notin_(_NOT_PERSON_SEARCHES)
         searches = (
             await db.execute(
                 select(
-                    func.count(),
-                    func.count().filter(SearchQuery.zero_result.is_(True)),
+                    func.count().filter(person_search),
+                    func.count().filter(person_search, SearchQuery.zero_result.is_(True)),
+                    func.count().filter(SearchQuery.surface == "autocomplete"),
                 ).where(SearchQuery.client_session_id == session_id)
             )
         ).one()
@@ -154,7 +502,12 @@ async def session_summary(
             (
                 await db.execute(
                     select(SearchQuery)
-                    .where(SearchQuery.client_session_id == session_id)
+                    .where(
+                        SearchQuery.client_session_id == session_id,
+                        # Keystrokes would take the whole limit on a busy
+                        # visit; they are counted above instead.
+                        SearchQuery.surface != "autocomplete",
+                    )
                     .order_by(SearchQuery.occurred_at.asc())
                     .limit(MAX_TIMELINE)
                 )
@@ -162,6 +515,40 @@ async def session_summary(
             .scalars()
             .all()
         )
+
+        # The product events the journey is read from, and the model calls per
+        # request so a chat turn can say what it cost.
+        journey_events = (
+            await db.execute(
+                select(
+                    ActivityEvent.occurred_at,
+                    ActivityEvent.event_type,
+                    ActivityEvent.request_id,
+                    ActivityEvent.props,
+                )
+                .where(
+                    ActivityEvent.client_session_id == session_id,
+                    ActivityEvent.event_type.in_(_JOURNEY_EVENTS),
+                )
+                .order_by(ActivityEvent.occurred_at.asc(), ActivityEvent.id.asc())
+                .limit(MAX_TIMELINE * 4)
+            )
+        ).all()
+
+        llm_per_request = (
+            await db.execute(
+                select(
+                    LLMUsage.request_id,
+                    func.count(),
+                    func.sum(LLMUsage.cost_usd),
+                )
+                .where(
+                    LLMUsage.client_session_id == session_id,
+                    LLMUsage.request_id.isnot(None),
+                )
+                .group_by(LLMUsage.request_id)
+            )
+        ).all()
 
         usage = (
             await db.execute(
@@ -197,6 +584,48 @@ async def session_summary(
     by_type = {event_type: int(count) for event_type, count in counts_by_type}
     started_at, ended_at, distinct_users, errors, server_errors, slowest = span
 
+    search_dicts = [
+        {
+            "occurred_at": _iso(row.occurred_at),
+            "occurred_at_dt": row.occurred_at,
+            "request_id": row.request_id,
+            "surface": row.surface,
+            # raw_query is absent for anyone who did not consent to it being
+            # kept; the normalised form is always there.
+            "query": row.raw_query or row.normalized_query,
+            "results": row.result_count_final,
+            "zero_result": bool(row.zero_result),
+            # A search that only returned anything because the constraints
+            # were loosened is a different outcome from one that just worked.
+            "relaxed": bool(row.relaxed),
+            "lexical_fallback": bool(row.lexical_fallback),
+            "latency_ms": row.latency_ms,
+        }
+        for row in search_rows
+    ]
+    journey = _build_journey(
+        [
+            {
+                "occurred_at": at,
+                "event_type": kind,
+                "request_id": request_id,
+                "props": props or {},
+            }
+            for at, kind, request_id, props in journey_events
+        ],
+        search_dicts,
+        {
+            request_id: {
+                "calls": int(calls or 0),
+                "cost_usd": float(cost) if cost is not None else None,
+            }
+            for request_id, calls, cost in llm_per_request
+        },
+        [row.to_dict() for row in feedback_rows],
+    )
+    journey["recipes"]["totals"]["suggestions"] = int(searches[2] or 0)
+    chat = journey["foodchat"]["totals"]
+
     from analytics.people import resolve_people
 
     people = await resolve_people(user_id for user_id, _members, _count in who)
@@ -209,33 +638,28 @@ async def session_summary(
         "events_by_type": by_type,
         # Named counts, so a console does not have to know which event type
         # means "asked a question".
-        "questions_asked": by_type.get("qa.ask", 0) + by_type.get("qa.answered", 0),
+        # The browser reports `qa.ask` and FoodScholar reports `qa.answered`
+        # for the same question; adding them counted every question twice
+        # once the service's rows reached the session.
+        "questions_asked": journey["foodscholar"]["totals"]["questions"],
         "chat_turns": by_type.get("chat.turn", 0) + by_type.get("chat.message", 0),
+        "conversations": chat["conversations"],
         "meal_plans_generated": by_type.get("chat.plan_generated", 0),
+        "meal_plans_refined": chat["plans_refined"],
         "meal_plans_saved": by_type.get("chat.plan_saved", 0),
         "recipes_viewed": by_type.get("recipe.view", 0),
         "searches": int(searches[0] or 0),
         "searches_with_no_results": int(searches[1] or 0),
         "feedback_given": len(feedback_rows),
         "feedback": [row.to_dict() for row in feedback_rows],
+        # The person's own searches. Questions and FoodChat's lookups are in
+        # the journey, under the question or the turn they belong to.
         "searches_performed": [
-            {
-                "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
-                "surface": row.surface,
-                # raw_query is absent for anyone who did not consent to it
-                # being kept; the normalised form is always there.
-                "query": row.raw_query or row.normalized_query,
-                "results": row.result_count_final,
-                "zero_result": bool(row.zero_result),
-                # Recorded since the first release and never shown: a search
-                # that only returned anything because the constraints were
-                # loosened is a different outcome from one that just worked.
-                "relaxed": bool(row.relaxed),
-                "lexical_fallback": bool(row.lexical_fallback),
-                "latency_ms": row.latency_ms,
-            }
-            for row in search_rows
+            {k: v for k, v in row.items() if k not in ("occurred_at_dt", "request_id")}
+            for row in search_dicts
+            if row["surface"] not in _NOT_PERSON_SEARCHES
         ],
+        "journey": journey,
         "llm_calls": int(usage[2] or 0),
         "total_tokens": int(usage[0] or 0),
         "cost_usd": float(usage[1] or 0),
@@ -344,6 +768,401 @@ async def recent_sessions(
         }
         for row in rows
     ]
+
+# ---------------------------------------------------------------- journeys --
+
+#: Steps of a conversation path shown before it is cut. Six is where paths
+#: stop sharing a shape: past it nearly every conversation is its own path,
+#: and a table of paths seen once says nothing.
+PATH_STEPS = 6
+
+#: Chat events read per report. A ceiling, not a sample: at today's volumes it
+#: is never reached, and if it is the report says so rather than quietly
+#: describing the first part of the period.
+MAX_JOURNEY_ROWS = 100_000
+
+
+def _bucket(n: int) -> str:
+    if n <= 2:
+        return str(n)
+    return "3–5" if n <= 5 else "6+"
+
+
+def _conversation_flows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """How FoodChat conversations unfold, from their turns and plans.
+
+    Rows are chat events in time order: `event_type`, `conversation_id`,
+    `client_session_id`, `intent`, `outcome`, `refinement`. Each conversation
+    becomes the sequence of what the member did — the intent each turn was
+    routed to, a refused or failed turn as itself, a kept plan as "saved" —
+    with repeats collapsed, and the report is read off those sequences: the
+    common paths, the step each one ends on, and what follows what.
+
+    Pure, so it can be tested without a database.
+    """
+    conversations: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        conversation_id = row.get("conversation_id")
+        if not conversation_id:
+            continue
+        conv = conversations.setdefault(conversation_id, {
+            "steps": [], "turns": 0, "failed": 0, "busy": 0,
+            "plans": 0, "refined": 0, "saved": 0, "sessions": set(),
+        })
+        if row.get("client_session_id"):
+            conv["sessions"].add(row["client_session_id"])
+        kind = row.get("event_type")
+        if kind == "chat.turn":
+            outcome = row.get("outcome") or "ok"
+            conv["turns"] += 1
+            conv["failed"] += 1 if outcome == "error" else 0
+            conv["busy"] += 1 if outcome == "busy" else 0
+            conv["steps"].append(row.get("intent") if outcome == "ok" else outcome)
+        elif kind == "chat.plan_generated":
+            conv["plans"] += 1
+            conv["refined"] += 1 if row.get("refinement") else 0
+        elif kind == "chat.plan_saved":
+            conv["saved"] += 1
+            conv["steps"].append("saved")
+
+    paths: Dict[tuple, Dict[str, Any]] = {}
+    entries: Dict[str, int] = {}
+    exits: Dict[str, Dict[str, int]] = {}
+    transitions: Dict[tuple, int] = {}
+    per_conversation: Dict[str, int] = {}
+    per_session: Dict[str, int] = {}
+    turn_counts: List[int] = []
+
+    for conv in conversations.values():
+        collapsed = _collapse(conv["steps"])
+        if not collapsed:
+            continue
+        turn_counts.append(conv["turns"])
+        saved = conv["saved"] > 0
+        names = [step["step"] for step in collapsed]
+
+        # Three refinements and seven are the same shape of conversation, so a
+        # run is grouped as one, two, or three-or-more.
+        key = tuple((s["step"], min(s["repeats"], 3)) for s in collapsed[:PATH_STEPS])
+        path = paths.setdefault(key, {
+            "path": [{"step": s, "repeats": r, "or_more": r >= 3} for s, r in key],
+            "more": False, "conversations": 0, "saved": 0,
+        })
+        path["conversations"] += 1
+        path["saved"] += 1 if saved else 0
+        path["more"] = path["more"] or len(collapsed) > PATH_STEPS
+
+        entries[names[0]] = entries.get(names[0], 0) + 1
+        last = exits.setdefault(names[-1], {"conversations": 0, "turns": 0})
+        last["conversations"] += 1
+        last["turns"] += conv["turns"]
+        for before, after in zip(["start"] + names, names + ["end"]):
+            transitions[(before, after)] = transitions.get((before, after), 0) + 1
+
+        bucket = _bucket(conv["plans"])
+        per_conversation[bucket] = per_conversation.get(bucket, 0) + 1
+
+    # Plans per browser session, which is the unit somebody means by "how
+    # many plans did they make in one go". Only conversations linked to a
+    # session count here, and the report says how many that was.
+    session_plans: Dict[str, int] = {}
+    for conv in conversations.values():
+        for sid in conv["sessions"]:
+            session_plans[sid] = session_plans.get(sid, 0) + conv["plans"]
+    for plans in session_plans.values():
+        bucket = _bucket(plans)
+        per_session[bucket] = per_session.get(bucket, 0) + 1
+
+    active = [c for c in conversations.values() if c["steps"]]
+    total = len(active)
+    with_plan = sum(1 for c in active if c["plans"])
+    turn_counts.sort()
+
+    def at(fraction: float) -> Optional[int]:
+        if not turn_counts:
+            return None
+        return turn_counts[min(len(turn_counts) - 1, int(fraction * len(turn_counts)))]
+
+    order = ["0", "1", "2", "3–5", "6+"]
+    return {
+        "conversations": total,
+        "turns": sum(c["turns"] for c in active),
+        "median_turns": at(0.5),
+        "p90_turns": at(0.9),
+        "failed_turns": sum(c["failed"] for c in active),
+        "busy_turns": sum(c["busy"] for c in active),
+        "with_plan": with_plan,
+        "plans_generated": sum(c["plans"] for c in active),
+        "plans_refined": sum(c["refined"] for c in active),
+        "plans_saved": sum(c["saved"] for c in active),
+        "conversations_saved": sum(1 for c in active if c["saved"]),
+        # Of the conversations that produced a plan, how many kept one: the
+        # one number that says whether planning is working.
+        "save_rate": _ratio(sum(1 for c in active if c["plans"] and c["saved"]), with_plan),
+        "sessions_linked": len(session_plans),
+        "paths": [
+            {**p, "share": _ratio(p["conversations"], total)}
+            for p in sorted(paths.values(), key=lambda p: -p["conversations"])[:20]
+        ],
+        "entries": [
+            {"step": step, "conversations": n, "share": _ratio(n, total)}
+            for step, n in sorted(entries.items(), key=lambda kv: -kv[1])
+        ],
+        "exits": [
+            {
+                "step": step,
+                "conversations": v["conversations"],
+                "share": _ratio(v["conversations"], total),
+                "avg_turns": round(v["turns"] / v["conversations"], 1),
+            }
+            for step, v in sorted(exits.items(), key=lambda kv: -kv[1]["conversations"])
+        ],
+        "transitions": [
+            {"from": a, "to": b, "count": n}
+            for (a, b), n in sorted(transitions.items(), key=lambda kv: -kv[1])[:30]
+        ],
+        "plans_per_conversation": [
+            {"bucket": b, "count": per_conversation.get(b, 0)} for b in order
+        ],
+        "plans_per_session": [
+            {"bucket": b, "count": per_session.get(b, 0)} for b in order
+        ],
+    }
+
+
+async def journeys(
+    *, days: int = 30, since: Optional[str] = None, until: Optional[str] = None
+) -> Dict[str, Any]:
+    """How visits unfold in each product, and where they stop.
+
+    The other reports count things. This one follows them: a conversation from
+    its first intent to the step it ended on, a question to whether anybody
+    asked a second, a search to whether anything was opened after it. Those
+    are the shapes that say whether a product is doing its job — a FoodChat
+    that generates plans nobody keeps, or a search that is always followed by
+    a second search, look healthy in every count.
+    """
+    from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
+    from sql import ActivityEvent, FeedbackRecord, SearchQuery
+
+    window = _window(days, since, until)
+    in_window = ActivityEvent.occurred_at.between(window.since, window.until)
+    props = ActivityEvent.props
+
+    async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
+        chat_rows = (
+            await db.execute(
+                select(
+                    ActivityEvent.event_type,
+                    ActivityEvent.client_session_id,
+                    props["session_id"].astext,
+                    props["intent"].astext,
+                    props["outcome"].astext,
+                    props["refinement"].astext,
+                )
+                .where(
+                    in_window,
+                    ActivityEvent.event_type.in_(
+                        ("chat.turn", "chat.plan_generated", "chat.plan_saved")
+                    ),
+                )
+                .order_by(ActivityEvent.occurred_at.asc(), ActivityEvent.id.asc())
+                .limit(MAX_JOURNEY_ROWS + 1)
+            )
+        ).all()
+
+        # FoodScholar, per browser session. Read from the browser's own
+        # `qa.ask`, which always carries the session; the service's rows only
+        # do once correlated.
+        asks = (
+            select(
+                ActivityEvent.client_session_id.label("sid"),
+                func.count().label("n"),
+            )
+            .where(
+                in_window,
+                ActivityEvent.event_type == "qa.ask",
+                ActivityEvent.client_session_id.isnot(None),
+            )
+            .group_by(ActivityEvent.client_session_id)
+            .subquery()
+        )
+        cited = (
+            select(ActivityEvent.client_session_id.label("sid"))
+            .where(
+                in_window,
+                ActivityEvent.event_type == "qa.citation_opened",
+                ActivityEvent.client_session_id.isnot(None),
+            )
+            .distinct()
+            .subquery()
+        )
+        qa_sessions = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.count().filter(asks.c.n >= 2),
+                    func.percentile_disc(0.5).within_group(asks.c.n),
+                    func.coalesce(func.sum(asks.c.n), 0),
+                    func.count(cited.c.sid),
+                ).select_from(asks.outerjoin(cited, cited.c.sid == asks.c.sid))
+            )
+        ).one()
+        qa_answers = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.count().filter(props["cache_hit"].astext.in_(("true", "True"))),
+                ).where(in_window, ActivityEvent.event_type == "qa.answered")
+            )
+        ).one()
+        # One expression object for SELECT and GROUP BY: built twice, each
+        # carries its own bound key, and Postgres refuses to see `$1` and `$5`
+        # as the same column.
+        mode = props["mode"].astext
+        qa_modes = (
+            await db.execute(
+                select(mode, func.count())
+                .where(in_window, ActivityEvent.event_type == "qa.answered")
+                .group_by(mode)
+                .order_by(func.count().desc())
+                .limit(10)
+            )
+        ).all()
+        qa_ratings = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.count().filter(FeedbackRecord.rating_value.in_(_NEGATIVE_VALUES)),
+                ).where(
+                    FeedbackRecord.occurred_at.between(window.since, window.until),
+                    FeedbackRecord.target_type == "qa_answer",
+                )
+            )
+        ).one()
+
+        # Recipe search, per browser session: did anything get opened after
+        # the first search, and did they have to search again.
+        searched = (
+            select(
+                ActivityEvent.client_session_id.label("sid"),
+                func.min(ActivityEvent.occurred_at).label("first_at"),
+                func.count().label("n"),
+            )
+            .where(
+                in_window,
+                ActivityEvent.event_type == "recipe.search",
+                ActivityEvent.client_session_id.isnot(None),
+            )
+            .group_by(ActivityEvent.client_session_id)
+            .subquery()
+        )
+        opened = (
+            select(
+                ActivityEvent.client_session_id.label("sid"),
+                func.max(ActivityEvent.occurred_at).label("last_at"),
+            )
+            .where(
+                in_window,
+                ActivityEvent.event_type.in_(("recipe.view", "recipe.result_click")),
+                ActivityEvent.client_session_id.isnot(None),
+            )
+            .group_by(ActivityEvent.client_session_id)
+            .subquery()
+        )
+        favourited = (
+            select(ActivityEvent.client_session_id.label("sid"))
+            .where(
+                in_window,
+                ActivityEvent.event_type == "favorite.add",
+                ActivityEvent.client_session_id.isnot(None),
+            )
+            .distinct()
+            .subquery()
+        )
+        search_sessions = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.count().filter(searched.c.n >= 2),
+                    func.count().filter(opened.c.last_at >= searched.c.first_at),
+                    func.count(favourited.c.sid),
+                ).select_from(
+                    searched.outerjoin(opened, opened.c.sid == searched.c.sid).outerjoin(
+                        favourited, favourited.c.sid == searched.c.sid
+                    )
+                )
+            )
+        ).one()
+        person_search = SearchQuery.surface.notin_(_NOT_PERSON_SEARCHES)
+        search_rows = (
+            await db.execute(
+                select(
+                    func.count().filter(person_search),
+                    func.count().filter(person_search, SearchQuery.zero_result.is_(True)),
+                    func.count().filter(person_search, SearchQuery.relaxed.is_(True)),
+                    func.count().filter(SearchQuery.surface == "tools"),
+                    func.count().filter(
+                        SearchQuery.surface == "tools", SearchQuery.zero_result.is_(True)
+                    ),
+                ).where(SearchQuery.occurred_at.between(window.since, window.until))
+            )
+        ).one()
+
+    truncated = len(chat_rows) > MAX_JOURNEY_ROWS
+    flows = _conversation_flows([
+        {
+            "event_type": kind,
+            "client_session_id": sid,
+            "conversation_id": conversation_id,
+            "intent": intent,
+            "outcome": outcome,
+            "refinement": refinement == "true",
+        }
+        for kind, sid, conversation_id, intent, outcome, refinement in chat_rows[:MAX_JOURNEY_ROWS]
+    ])
+
+    asking, follow_up, median_asked, asked, citing = qa_sessions
+    searching, searched_again, searched_then_opened, searched_then_kept = search_sessions
+    searches, zero, loosened, lookups, empty_lookups = search_rows
+
+    return {
+        **window,
+        "foodchat": {**flows, "truncated": truncated},
+        "foodscholar": {
+            "questions": max(int(asked or 0), int(qa_answers[0] or 0)),
+            "answered": int(qa_answers[0] or 0),
+            "from_cache": int(qa_answers[1] or 0),
+            "sessions": int(asking or 0),
+            "median_per_session": int(median_asked) if median_asked is not None else None,
+            # A second question in the same visit is either a follow-up or a
+            # rephrasing of a first answer that missed. Both are worth knowing.
+            "follow_up_sessions": int(follow_up or 0),
+            "follow_up_rate": _ratio(int(follow_up or 0), int(asking or 0)),
+            "citation_sessions": int(citing or 0),
+            "citation_rate": _ratio(int(citing or 0), int(asking or 0)),
+            "rated": int(qa_ratings[0] or 0),
+            "rated_negative": int(qa_ratings[1] or 0),
+            "by_mode": [{"mode": m or "unknown", "count": int(n)} for m, n in qa_modes],
+        },
+        "recipes": {
+            "searches": int(searches or 0),
+            "found_nothing": int(zero or 0),
+            "zero_result_rate": _ratio(int(zero or 0), int(searches or 0)),
+            "loosened": int(loosened or 0),
+            "sessions": int(searching or 0),
+            "searched_again": int(searched_again or 0),
+            "searched_again_rate": _ratio(int(searched_again or 0), int(searching or 0)),
+            "opened_after_search": int(searched_then_opened or 0),
+            "opened_after_search_rate": _ratio(int(searched_then_opened or 0), int(searching or 0)),
+            "favourited_sessions": int(searched_then_kept or 0),
+            # FoodChat's own lookups, apart from people's searches: a lookup
+            # that finds nothing is a turn that had nothing to plan with.
+            "assistant_lookups": int(lookups or 0),
+            "assistant_lookups_empty": int(empty_lookups or 0),
+        },
+    }
+
 
 # ---------------------------------------------------------------- overview --
 async def overview(*, days: int = 7, since: Optional[str] = None, until: Optional[str] = None) -> Dict[str, Any]:
@@ -3114,6 +3933,16 @@ async def review_summary(*, days: int = 90, since: Optional[str] = None, until: 
 # =============================================================================
 
 
+#: What the board's "did" filter means, as the event types that show it.
+_BOARD_ACTIVITY = {
+    "plans": ("chat.plan_generated",),
+    "saved_plans": ("chat.plan_saved",),
+    "chat": ("chat.turn",),
+    "questions": ("qa.ask", "qa.answered"),
+    "recipes": ("recipe.view", "recipe.result_click"),
+}
+
+
 async def session_board(
     *,
     days: int = 7,
@@ -3129,6 +3958,8 @@ async def session_board(
     has_errors: Optional[bool] = None,
     search: Optional[str] = None,
     include_bots: bool = False,
+    app: Optional[str] = None,
+    activity: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Sessions as a board: who, on what, for how long, and did it break.
 
@@ -3143,7 +3974,7 @@ async def session_board(
     from sqlalchemy import distinct
 
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
-    from sql import ActivityEvent, ClientSession
+    from sql import ActivityEvent, ClientSession, SearchQuery
 
     window = _window(days, since, until)
     size = _clamp(limit, 50, 200)
@@ -3172,6 +4003,41 @@ async def session_board(
         # A prefix match on the session reference, which is what someone reads
         # off the footer and quotes with a typo in the last character.
         filters.append(ClientSession.session_id.ilike(f"{search.strip()}%"))
+
+    # Which product, and what was done in it. "Find me the FoodChat sessions"
+    # had no answer short of opening every session in the window, which is the
+    # question most people arrive at this board with. Both are subqueries over
+    # the activity in the window rather than a correlated EXISTS per session,
+    # so they ride the (app, time) and (type, time) indexes.
+    def sessions_where(*conditions):
+        return (
+            select(ActivityEvent.client_session_id)
+            .where(
+                ActivityEvent.client_session_id.isnot(None),
+                ActivityEvent.occurred_at >= window.since,
+                *conditions,
+            )
+        )
+
+    if app:
+        filters.append(ClientSession.session_id.in_(sessions_where(ActivityEvent.app == app)))
+    activity_types = _BOARD_ACTIVITY.get(activity or "")
+    if activity == "searches":
+        filters.append(
+            ClientSession.session_id.in_(
+                select(SearchQuery.client_session_id).where(
+                    SearchQuery.client_session_id.isnot(None),
+                    SearchQuery.occurred_at >= window.since,
+                    SearchQuery.surface.notin_(_NOT_PERSON_SEARCHES),
+                )
+            )
+        )
+    elif activity_types:
+        filters.append(
+            ClientSession.session_id.in_(
+                sessions_where(ActivityEvent.event_type.in_(activity_types))
+            )
+        )
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
         total = await db.scalar(select(func.count()).select_from(ClientSession).where(*filters))
@@ -3220,6 +4086,51 @@ async def session_board(
                 ).all()
             }
 
+        # What each visible session did, so the board says "3 plans, 1 saved"
+        # before anybody opens a row — the reason to open one is usually that.
+        done: Dict[str, Dict[str, Any]] = {}
+        if ids:
+            kind = ActivityEvent.event_type
+            for sid, turns, plans, saved, asked, answered, viewed, apps in (
+                await db.execute(
+                    select(
+                        ActivityEvent.client_session_id,
+                        func.count().filter(kind == "chat.turn"),
+                        func.count().filter(kind == "chat.plan_generated"),
+                        func.count().filter(kind == "chat.plan_saved"),
+                        func.count().filter(kind == "qa.ask"),
+                        func.count().filter(kind == "qa.answered"),
+                        func.count().filter(kind == "recipe.view"),
+                        func.array_agg(func.distinct(ActivityEvent.app)),
+                    )
+                    .where(ActivityEvent.client_session_id.in_(ids))
+                    .group_by(ActivityEvent.client_session_id)
+                )
+            ).all():
+                done[sid] = {
+                    "chat_turns": int(turns or 0),
+                    "meal_plans_generated": int(plans or 0),
+                    "meal_plans_saved": int(saved or 0),
+                    # The browser and FoodScholar each report the same
+                    # question once; the larger is the count, not the sum.
+                    "questions_asked": max(int(asked or 0), int(answered or 0)),
+                    "recipes_viewed": int(viewed or 0),
+                    "apps": sorted(
+                        a for a in (apps or []) if a and a not in ("platform", "console")
+                    ),
+                }
+            for sid, n in (
+                await db.execute(
+                    select(SearchQuery.client_session_id, func.count())
+                    .where(
+                        SearchQuery.client_session_id.in_(ids),
+                        SearchQuery.surface.notin_(_NOT_PERSON_SEARCHES),
+                    )
+                    .group_by(SearchQuery.client_session_id)
+                )
+            ).all():
+                done.setdefault(sid, {})["searches"] = int(n or 0)
+
         # The mix, over the whole filtered set rather than the visible page —
         # otherwise the summary describes the scroll position.
         def mix(column):
@@ -3257,6 +4168,16 @@ async def session_board(
         events, first, last, errors = activity.get(row.session_id, (0, None, None, 0))
         payload["events"] = events
         payload["failed_requests"] = errors
+        payload["did"] = {
+            "chat_turns": 0,
+            "meal_plans_generated": 0,
+            "meal_plans_saved": 0,
+            "questions_asked": 0,
+            "recipes_viewed": 0,
+            "searches": 0,
+            "apps": [],
+            **done.get(row.session_id, {}),
+        }
         span_start = first or row.started_at
         span_end = last or row.last_seen_at
         payload["duration_seconds"] = (
@@ -3577,6 +4498,7 @@ async def click_map(
     since: Optional[str] = None,
     until: Optional[str] = None,
     device_type: Optional[str] = None,
+    rows: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Where people clicked on one page, two ways.
 
@@ -3598,11 +4520,17 @@ async def click_map(
     window = _window(days, since, until)
     # Bounded because the response is grid x grid cells: 100 is ten thousand.
     cells = max(8, min(int(grid or 40), 100))
+    # Rows as many as the page's shape needs. A square grid over a phone page
+    # four thousand pixels tall makes cells ten wide and a hundred tall — heat
+    # drawn as stripes, a cell's height away from the control. The console
+    # measures the page and asks for square cells; the total stays bounded.
+    row_cells = max(8, min(int(rows or cells), 400))
 
-    filters = [
+    page_filters = [
         UIInteraction.occurred_at.between(window.since, window.until),
         UIInteraction.path == path,
     ]
+    filters = list(page_filters)
     if device_type:
         filters.append(UIInteraction.viewport_w.isnot(None))
         if device_type == "phone":
@@ -3621,7 +4549,7 @@ async def click_map(
         # Integer division onto the grid. `least` keeps a click at exactly the
         # right or bottom edge inside the last cell instead of one past it.
         col = func.least(cast(UIInteraction.x_pct * cells / 10000, Integer), cells - 1)
-        row = func.least(cast(UIInteraction.y_pct * cells / 10000, Integer), cells - 1)
+        row = func.least(cast(UIInteraction.y_pct * row_cells / 10000, Integer), row_cells - 1)
         heat = (
             await db.execute(
                 select(
@@ -3634,7 +4562,7 @@ async def click_map(
                 .where(*positioned)
                 .group_by(col, row)
                 .order_by(func.sum(UIInteraction.repeats).desc())
-                .limit(cells * cells)
+                .limit(cells * row_cells)
             )
         ).all()
 
@@ -3694,6 +4622,39 @@ async def click_map(
             )
         ).one()
 
+        # Clicks per screen size, whatever size is selected. A phone and a
+        # laptop lay the same page out differently, so a map pooled across
+        # both puts heat on neither layout; the console uses this to open on
+        # the size most clicks came from, and to say what the others hold.
+        width = UIInteraction.viewport_w
+        sizes = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(UIInteraction.repeats).filter(width < 640), 0),
+                    func.coalesce(
+                        func.sum(UIInteraction.repeats).filter(width.between(640, 1023)), 0
+                    ),
+                    func.coalesce(func.sum(UIInteraction.repeats).filter(width >= 1024), 0),
+                ).where(
+                    *page_filters,
+                    UIInteraction.x_pct.isnot(None),
+                    UIInteraction.y_pct.isnot(None),
+                )
+            )
+        ).one()
+
+        # The window those clicks were made in. The page is drawn behind the
+        # map at this size, because positions are fractions of the page each
+        # visitor had — and a page laid out at another width is another page.
+        viewport = (
+            await db.execute(
+                select(
+                    func.percentile_disc(0.5).within_group(UIInteraction.viewport_w),
+                    func.percentile_disc(0.5).within_group(UIInteraction.viewport_h),
+                ).where(*positioned, UIInteraction.viewport_w.isnot(None))
+            )
+        ).one()
+
         # Real addresses this pattern was seen at, most recent first. The map
         # is drawn over a page, and `/recipes/[id]` cannot be opened — one of
         # these can. Several are offered rather than one because the newest
@@ -3719,6 +4680,16 @@ async def click_map(
         "path": path,
         "example_paths": [row[0] for row in examples if row[0]],
         "grid": cells,
+        "rows": row_cells,
+        "by_device": {
+            "phone": int(sizes[0] or 0),
+            "tablet": int(sizes[1] or 0),
+            "desktop": int(sizes[2] or 0),
+        },
+        "viewport": {
+            "width": int(viewport[0]) if viewport[0] is not None else None,
+            "height": int(viewport[1]) if viewport[1] is not None else None,
+        },
         "clicks": int(totals[0] or 0),
         "sessions": int(totals[1] or 0),
         "rage_clicks": int(totals[2] or 0),

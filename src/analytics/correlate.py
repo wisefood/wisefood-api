@@ -56,10 +56,15 @@ _TARGETS = {
     "feedback": False,
 }
 
+#: Who made the request a service-reported row belongs to.
+#:
+#: The batch is taken from rows that have a match, not from unattributed rows
+#: in general. Under opt-in consent most of the gateway's own rows are
+#: unattributed and always will be, and a batch drawn from those picked the
+#: same five thousand unfillable rows on every pass while the service rows
+#: behind them waited out the window.
 _RESOLVE = """
-UPDATE analytics.{table} AS target
-SET user_id = source.user_id{guest_assignment}
-FROM (
+WITH source AS (
     -- One user per request, or no attribution at all. A caller may supply its
     -- own X-Request-Id, so two people can end up sharing one — by accident or
     -- because somebody guessed an id in flight. Where that happens the
@@ -74,18 +79,66 @@ FROM (
       AND occurred_at >= now() - make_interval(hours => :hours)
     GROUP BY request_id
     HAVING count(DISTINCT user_id) = 1
-) AS source
-WHERE target.request_id = source.request_id
-  AND target.user_id IS NULL
-  AND target.occurred_at >= now() - make_interval(hours => :hours)
-  AND target.id IN (
-      SELECT id FROM analytics.{table}
-      WHERE user_id IS NULL
-        AND request_id IS NOT NULL
-        AND occurred_at >= now() - make_interval(hours => :hours)
-      LIMIT :batch
-  )
+),
+pending AS (
+    SELECT target.id, source.user_id, source.is_guest
+    FROM analytics.{table} AS target
+    JOIN source ON source.request_id = target.request_id
+    WHERE target.user_id IS NULL
+      AND target.occurred_at >= now() - make_interval(hours => :hours)
+    LIMIT :batch
+)
+UPDATE analytics.{table} AS target
+SET user_id = pending.user_id{guest_assignment}
+FROM pending
+WHERE target.id = pending.id
 """
+
+
+#: The browser session a service-reported row happened in.
+#:
+#: The same gap as identity, one column over. FoodChat, FoodScholar and
+#: RecipeWrangler report over their own connection, so their rows carry the
+#: request id and no session — and every session report filters on the
+#: session. The result was a session page that showed the request to start a
+#: chat turn and nothing the turn produced: no plans, no questions, no
+#: searches, no model calls. "What they searched for" was empty for every
+#: session, because every search is reported by a service.
+#:
+#: The pending rows are joined first and the batch taken from the joined set.
+#: Taking the batch from the unfilled rows alone, as the identity statement
+#: above does, picks the same rows on every pass — and a request made without
+#: a browser (the SDK, a cron, a crawler) can never be filled, so a window
+#: holding more than one batch of those starves the rows that can.
+_RESOLVE_SESSION_IDS = """
+WITH source AS (
+    SELECT request_id,
+           min(client_session_id) AS client_session_id
+    FROM analytics.event
+    WHERE request_id IS NOT NULL
+      AND client_session_id IS NOT NULL
+      AND occurred_at >= now() - make_interval(hours => :hours)
+    GROUP BY request_id
+    -- A caller may supply its own X-Request-Id, so two tabs can share one.
+    -- Where they do, the row belongs to neither rather than to the wrong one.
+    HAVING count(DISTINCT client_session_id) = 1
+),
+pending AS (
+    SELECT target.id, source.client_session_id
+    FROM analytics.{table} AS target
+    JOIN source ON source.request_id = target.request_id
+    WHERE target.client_session_id IS NULL
+      AND target.occurred_at >= now() - make_interval(hours => :hours)
+    LIMIT :batch
+)
+UPDATE analytics.{table} AS target
+SET client_session_id = pending.client_session_id
+FROM pending
+WHERE target.id = pending.id
+"""
+
+#: The tables a service writes to with a request id and no session.
+_SESSION_TARGETS = ("event", "search_query", "llm_usage", "feedback")
 
 
 #: A browser session, attributed from the activity recorded during it.
@@ -190,7 +243,9 @@ async def resolve_identities(
     from analytics.db import session_factory
 
     filled: Dict[str, int] = {}
-    hours = max(1, min(int(hours), 24 * 30))
+    # A year, so the one-off backfill can reach everything retention keeps;
+    # the timer never asks for more than the default.
+    hours = max(1, min(int(hours), 24 * 365))
     batch = max(1, min(int(batch), 100_000))
 
     for table, has_guest in _TARGETS.items():
@@ -201,7 +256,7 @@ async def resolve_identities(
             async with session_factory()() as db:
                 statement = _RESOLVE.format(
                     table=table,
-                    guest_assignment=",\n    is_guest = source.is_guest" if has_guest else "",
+                    guest_assignment=",\n    is_guest = pending.is_guest" if has_guest else "",
                 )
                 result = await db.execute(
                     text(statement), {"hours": hours, "batch": batch}
@@ -216,6 +271,27 @@ async def resolve_identities(
                 "analytics.correlate_failed table=%s", table, exc_info=True
             )
             filled[table] = -1
+
+    # The browser session, for the same rows. After identity, not before:
+    # neither depends on the other, but a failure here must not cost the
+    # attribution the per-person reports rely on.
+    for table in _SESSION_TARGETS:
+        key = f"{table}.session"
+        try:
+            async with session_factory()() as db:
+                result = await db.execute(
+                    text(_RESOLVE_SESSION_IDS.format(table=table)),
+                    {"hours": hours, "batch": batch},
+                )
+                await db.commit()
+                filled[key] = int(result.rowcount or 0)
+        except Exception:
+            logger.warning(
+                "analytics.correlate_failed table=%s column=client_session_id",
+                table,
+                exc_info=True,
+            )
+            filled[key] = -1
 
     # Sessions, keyed on the session rather than the request. Separate because
     # the statement joins on a different column and the table has no

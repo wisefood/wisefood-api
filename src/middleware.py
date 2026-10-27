@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 #: everything else. Matched against the ROUTE TEMPLATE, never the URL — the
 #: service runs behind a `/rest` root path and `request.url.path` carries it.
 _UNRECORDED_ROUTES = ("/api/v1/analytics/", "/api/v1/system/ping")
+#: The `X-Client` the console's click-map backdrop sends. Prefix-matched so the
+#: UI version after the slash does not matter.
+BACKDROP_CLIENT = "wisefood-ui-backdrop"
 #: Paths whose responses must never be indexed, and must never let the URL
 #: travel onward in a `Referer`.
 #:
@@ -301,6 +304,11 @@ class RequestContextMiddleware:
             if not route or status is None:
                 return
             if any(route.startswith(prefix) for prefix in _UNRECORDED_ROUTES):
+                return
+            # The page an admin's click map draws itself over. It is a real
+            # page making real requests, but nobody is using it: recorded, it
+            # filed a visit to every page an expert looked at a map of.
+            if (context.get_client() or "").startswith(BACKDROP_CLIENT):
                 return
             from analytics import RECORDER
 

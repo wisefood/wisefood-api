@@ -1013,6 +1013,17 @@ async def get_session_activity(
 # ------------------------------------------------- real user monitoring ----
 
 
+@router.get("/journeys", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def journey_report(
+    request: Request, days: int = 30, since: Optional[str] = None, until: Optional[str] = None
+):
+    """How conversations, questions and searches unfold, and where they stop."""
+    from analytics.reports import journeys
+
+    return await journeys(days=days, since=since, until=until)
+
+
 @router.get("/board", dependencies=[Depends(auth("admin,expert"))])
 @render()
 async def sessions_board(
@@ -1030,6 +1041,8 @@ async def sessions_board(
     has_errors: Optional[bool] = None,
     search: Optional[str] = None,
     include_bots: bool = False,
+    app: Optional[str] = None,
+    activity: Optional[str] = None,
 ):
     """Sessions with the device they ran on, filterable on every column."""
     from analytics.reports import session_board
@@ -1048,6 +1061,8 @@ async def sessions_board(
         has_errors=has_errors,
         search=search,
         include_bots=include_bots,
+        app=app,
+        activity=activity,
     )
     # Naming individual people is the privileged act, so it is recorded — the
     # same rule the user list follows.
@@ -1153,6 +1168,7 @@ async def heatmap(
     since: Optional[str] = None,
     until: Optional[str] = None,
     device_type: Optional[str] = None,
+    rows: Optional[int] = None,
 ):
     """Where people clicked on one page, by element and by coordinate.
 
@@ -1168,6 +1184,7 @@ async def heatmap(
         since=since,
         until=until,
         device_type=device_type,
+        rows=rows,
     )
 
 

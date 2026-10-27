@@ -290,3 +290,19 @@ class TestRouteIsKnownToHandlers:
         with TestClient(routed_app.app) as client:
             client.post("/rest/api/v1/analytics/events", json={})
         assert [e for e in routed_app.recorded if e["type"] == "http.request"] == []
+
+    def test_the_click_map_backdrop_is_not_recorded(self, routed_app):
+        """The console draws a click map over the real page in a frame. That
+        page makes real requests, but nobody is visiting it; recorded, every
+        map an expert opened filed a visit to the page it was a map of."""
+        with TestClient(routed_app.app) as client:
+            client.get(
+                "/rest/api/v1/members/abc/profile",
+                headers={"X-Client": "wisefood-ui-backdrop/1"},
+            )
+            client.get(
+                "/rest/api/v1/members/abc/profile",
+                headers={"X-Client": "wisefood-ui/1"},
+            )
+        events = [e for e in routed_app.recorded if e["type"] == "http.request"]
+        assert len(events) == 1
