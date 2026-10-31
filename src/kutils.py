@@ -260,19 +260,48 @@ def get_token(username, password):
     return KEYCLOAK_OPENID_CLIENT().token(username, password)
 
 
+@raise_keycloak_error
 def get_client_token(client_id, client_secret):
     """
-    Returns a token for the client in Keycloak using client credentials.
+    Machine-to-machine login for the platform's own services.
+
+    The caller's client_id and client_secret are checked by Keycloak against
+    the caller's own client before anything is handed back, and only clients
+    listed in MTM_TRUSTED_CLIENTS are accepted. Until this check existed the
+    route ignored both values and gave this API's service-account token
+    (realm admin) to anyone who asked.
+
+    The token returned is still this API's own: FoodScholar's guideline
+    workers call admin-only routes, so a service's own (agent) token is not
+    enough yet. Moving each service to its own token is the follow-up.
 
     Returns:
         dict: The token dictionary containing the access_token and additional details.
 
     Raises:
-        AuthenticationError: If the token could not be retrieved.
+        AuthenticationError: If the client is not trusted or its secret is wrong.
     """
-    return KEYCLOAK_OPENID_CLIENT().token(
-        grant_type="client_credentials", username=client_id, passwords=client_secret
+    from keycloak import KeycloakOpenID
+    from main import config
+
+    if client_id not in config.settings["MTM_TRUSTED_CLIENTS"]:
+        raise AuthenticationError(detail="Invalid client credentials")
+
+    caller = KeycloakOpenID(
+        server_url=config.settings["KEYCLOAK_URL"],
+        realm_name=config.settings["KEYCLOAK_REALM"],
+        client_id=client_id,
+        client_secret_key=client_secret,
+        verify=False,
     )
+    try:
+        caller.token(grant_type="client_credentials")
+    except (KeycloakAuthenticationError, KeycloakPostError) as e:
+        if getattr(e, "response_code", None) in (400, 401):
+            raise AuthenticationError(detail="Invalid client credentials") from e
+        raise
+
+    return KEYCLOAK_OPENID_CLIENT().token(grant_type="client_credentials")
 
 
 def get_user_by_token(access_token):

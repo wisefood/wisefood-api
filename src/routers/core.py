@@ -66,7 +66,7 @@ def login(request: Request, creds: LoginSchema):
 
 @router.post("/mtm")
 @render()
-def login(request: Request, creds: MTMSchema):
+def mtm_login(request: Request, creds: MTMSchema):
     return kutils.get_client_token(
         client_id=creds.client_id, client_secret=creds.client_secret
     )

@@ -108,6 +108,15 @@ class Config:
             ).split(",")
             if aud.strip()
         ]
+        # Platform services that may log in through POST /system/mtm. Each one
+        # must still prove its own client secret to Keycloak first.
+        self.settings["MTM_TRUSTED_CLIENTS"] = [
+            client.strip()
+            for client in os.getenv(
+                "MTM_TRUSTED_CLIENTS", "foodchat,foodscholar,recipewrangler,wisefood-api"
+            ).split(",")
+            if client.strip()
+        ]
         # Ephemeral guest access. Guests are real Keycloak users prefixed
         # 'guest-' carrying the 'guest' realm role and an expiry attribute;
         # the reaper deletes them (and their household) after GUEST_TTL_SECONDS.
