@@ -68,6 +68,10 @@ _JOURNEY_EVENTS = (
 #: Steps a journey keeps per conversation before saying how many it left out.
 MAX_JOURNEY_STEPS = 200
 
+#: Events a session's story reads. Failed requests and product events only,
+#: so even a long visit is a few hundred; the story itself keeps fewer.
+STORY_EVENT_LIMIT = 1500
+
 
 def _collapse(sequence: List[Optional[str]]) -> List[Dict[str, Any]]:
     """A run of the same step as one step with a count.
@@ -396,7 +400,7 @@ async def session_summary(
     which table each of those lives in.
     """
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
-    from sql import ActivityEvent, FeedbackRecord, LLMUsage, SearchQuery
+    from sql import ActivityEvent, ClientError, FeedbackRecord, LLMUsage, SearchQuery, UIInteraction
 
     limit = max(1, min(int(timeline_limit or 100), MAX_TIMELINE))
     start = max(0, int(timeline_offset or 0))
@@ -549,6 +553,66 @@ async def session_summary(
             )
         ).all()
 
+        # What the story reads beyond the journey: every product event, the
+        # page views between them, and the requests that failed. Successful
+        # requests are most of any session and say nothing a moment does.
+        story_events = (
+            await db.execute(
+                select(
+                    ActivityEvent.occurred_at,
+                    ActivityEvent.event_type,
+                    ActivityEvent.app,
+                    ActivityEvent.route,
+                    ActivityEvent.method,
+                    ActivityEvent.status,
+                    ActivityEvent.duration_ms,
+                    ActivityEvent.props,
+                )
+                .where(
+                    ActivityEvent.client_session_id == session_id,
+                    (ActivityEvent.event_type != "http.request")
+                    | (ActivityEvent.status >= 400),
+                )
+                .order_by(ActivityEvent.occurred_at.asc(), ActivityEvent.id.asc())
+                .limit(STORY_EVENT_LIMIT)
+            )
+        ).all()
+
+        story_errors = (
+            await db.execute(
+                select(
+                    ClientError.occurred_at,
+                    ClientError.name,
+                    ClientError.message,
+                    ClientError.url_path,
+                    ClientError.handled,
+                )
+                .where(ClientError.client_session_id == session_id)
+                .order_by(ClientError.occurred_at.asc())
+                .limit(50)
+            )
+        ).all()
+
+        story_clicks = (
+            await db.execute(
+                select(
+                    UIInteraction.occurred_at,
+                    UIInteraction.kind,
+                    UIInteraction.path,
+                    UIInteraction.element_key,
+                    UIInteraction.element_label,
+                    UIInteraction.element_role,
+                    UIInteraction.repeats,
+                )
+                .where(
+                    UIInteraction.client_session_id == session_id,
+                    UIInteraction.kind.in_(("rage", "dead")),
+                )
+                .order_by(UIInteraction.occurred_at.asc())
+                .limit(100)
+            )
+        ).all()
+
         llm_per_request = (
             await db.execute(
                 select(
@@ -640,6 +704,46 @@ async def session_summary(
     journey["recipes"]["totals"]["suggestions"] = int(searches[2] or 0)
     chat = journey["foodchat"]["totals"]
 
+    from analytics.story import build_story
+
+    story = build_story(
+        journey=journey,
+        searches=[row for row in search_dicts if row["surface"] not in _NOT_PERSON_SEARCHES],
+        events=[
+            {
+                "occurred_at": at,
+                "event_type": kind,
+                "app": app,
+                "route": route,
+                "method": method,
+                "status": status,
+                "duration_ms": duration,
+                "props": props or {},
+            }
+            for at, kind, app, route, method, status, duration, props in story_events
+        ],
+        feedback=[row.to_dict() for row in feedback_rows],
+        client_errors=[
+            {"occurred_at": at, "name": name, "message": message, "url_path": path, "handled": handled}
+            for at, name, message, path, handled in story_errors
+        ],
+        frustration=[
+            {
+                "occurred_at": at,
+                "kind": kind,
+                "path": path,
+                "element_key": key,
+                # The same guard as every other read of a click's label: text
+                # that was under the pointer but not on a control is not shown.
+                "element_label": label if label_allowed(role, key) else None,
+                "element_role": role,
+                "area": _area_of(key),
+                "repeats": repeats,
+            }
+            for at, kind, path, key, label, role, repeats in story_clicks
+        ],
+    )
+
     from analytics.people import resolve_people
 
     people = await resolve_people(user_id for user_id, _members, _count in who)
@@ -674,6 +778,9 @@ async def session_summary(
             if row["surface"] not in _NOT_PERSON_SEARCHES
         ],
         "journey": journey,
+        # The same session told once, in order, chapter by chapter — what the
+        # page leads with. The sections above stay for the tabs that list them.
+        "story": story,
         "llm_calls": int(usage[2] or 0),
         "total_tokens": int(usage[0] or 0),
         "cost_usd": float(usage[1] or 0),
@@ -4003,10 +4110,10 @@ async def session_board(
     question is never "show me all sessions" — it is "show me the ones on
     Safari", or "the ones that errored", or "this person's".
     """
-    from sqlalchemy import distinct
+    from sqlalchemy import distinct, or_
 
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
-    from sql import ActivityEvent, ClientSession, SearchQuery
+    from sql import ActivityEvent, ClientSession, FeedbackRecord, SearchQuery, UIInteraction
 
     window = _window(days, since, until)
     size = _clamp(limit, 50, 200)
@@ -4068,6 +4175,34 @@ async def session_board(
         filters.append(
             ClientSession.session_id.in_(
                 sessions_where(ActivityEvent.event_type.in_(activity_types))
+            )
+        )
+
+    # The sessions somebody should read first: a person said a reply was
+    # wrong, clicked something that would not respond, or hit an error.
+    rated_down = select(FeedbackRecord.client_session_id).where(
+        FeedbackRecord.client_session_id.isnot(None),
+        FeedbackRecord.occurred_at >= window.since,
+        FeedbackRecord.rating_value.in_(_NEGATIVE_VALUES),
+    )
+    frustrated = select(UIInteraction.client_session_id).where(
+        UIInteraction.client_session_id.isnot(None),
+        UIInteraction.occurred_at >= window.since,
+        UIInteraction.kind.in_(("rage", "dead")),
+    )
+    if activity == "rated_down":
+        filters.append(ClientSession.session_id.in_(rated_down))
+    elif activity == "frustrated":
+        filters.append(ClientSession.session_id.in_(frustrated))
+    elif activity == "needs_look":
+        filters.append(
+            or_(
+                ClientSession.session_id.in_(rated_down),
+                ClientSession.session_id.in_(frustrated),
+                ClientSession.errors > 0,
+                ClientSession.session_id.in_(
+                    sessions_where(ActivityEvent.status >= 500)
+                ),
             )
         )
 
@@ -4163,6 +4298,52 @@ async def session_board(
             ).all():
                 done.setdefault(sid, {})["searches"] = int(n or 0)
 
+            # How it went, beside what was done: the ratings with the words
+            # left with them, and the clicks that got no response.
+            for sid, value, reason, comment in (
+                await db.execute(
+                    select(
+                        FeedbackRecord.client_session_id,
+                        FeedbackRecord.rating_value,
+                        FeedbackRecord.reason,
+                        FeedbackRecord.comment,
+                    )
+                    .where(FeedbackRecord.client_session_id.in_(ids))
+                    .order_by(FeedbackRecord.occurred_at.asc())
+                )
+            ).all():
+                row = done.setdefault(sid, {})
+                if value in _NEGATIVE_VALUES:
+                    row["rated_down"] = row.get("rated_down", 0) + 1
+                    said = (comment or reason or "").strip()
+                    if said and len(row.setdefault("down_reasons", [])) < 2:
+                        row["down_reasons"].append(said[:120])
+                elif value:
+                    row["rated_up"] = row.get("rated_up", 0) + 1
+            for sid, clicks in (
+                await db.execute(
+                    select(UIInteraction.client_session_id, func.sum(UIInteraction.repeats))
+                    .where(
+                        UIInteraction.client_session_id.in_(ids),
+                        UIInteraction.kind.in_(("rage", "dead")),
+                    )
+                    .group_by(UIInteraction.client_session_id)
+                )
+            ).all():
+                done.setdefault(sid, {})["frustrated_clicks"] = int(clicks or 0)
+            for sid, failed in (
+                await db.execute(
+                    select(ActivityEvent.client_session_id, func.count())
+                    .where(
+                        ActivityEvent.client_session_id.in_(ids),
+                        ActivityEvent.event_type == "chat.turn",
+                        ActivityEvent.props["outcome"].astext == "error",
+                    )
+                    .group_by(ActivityEvent.client_session_id)
+                )
+            ).all():
+                done.setdefault(sid, {})["failed_turns"] = int(failed or 0)
+
         # The mix, over the whole filtered set rather than the visible page —
         # otherwise the summary describes the scroll position.
         def mix(column):
@@ -4208,6 +4389,11 @@ async def session_board(
             "recipes_viewed": 0,
             "searches": 0,
             "apps": [],
+            "rated_up": 0,
+            "rated_down": 0,
+            "down_reasons": [],
+            "frustrated_clicks": 0,
+            "failed_turns": 0,
             **done.get(row.session_id, {}),
         }
         span_start = first or row.started_at
@@ -4989,6 +5175,7 @@ async def feedback_context(feedback_id: int) -> Optional[Dict[str, Any]]:
     returns context with `available: false` and the inbox still renders.
     """
     from backend.postgres import POSTGRES_ASYNC_SESSION_FACTORY
+    from exceptions import NotFoundError
     from sql import FeedbackRecord
 
     async with POSTGRES_ASYNC_SESSION_FACTORY()() as db:
@@ -5012,9 +5199,11 @@ async def feedback_context(feedback_id: int) -> Optional[Dict[str, Any]]:
 
     try:
         if row.target_type == "chat_message":
-            from backend.foodchat import FoodchatBackend
+            # `FOODCHAT`: this imported a `FoodchatBackend` that never existed,
+            # so every chat rating read "the service did not answer".
+            from backend.foodchat import FOODCHAT
 
-            context["exchange"] = await FoodchatBackend.get(
+            context["exchange"] = await FOODCHAT.review_get(
                 f"/foodchat/review/messages/{row.target_id}/context"
             )
         elif row.target_type == "qa_answer":
@@ -5028,6 +5217,12 @@ async def feedback_context(feedback_id: int) -> Optional[Dict[str, Any]]:
                 f"No conversation is stored for a '{row.target_type}' rating."
             )
             return context
+    except NotFoundError:
+        context["reason"] = (
+            "The exchange is no longer stored. Conversations are pruned, and a "
+            "rating outlives the thing it was about."
+        )
+        return context
     except Exception:
         logger.info(
             "analytics.feedback_context_unavailable",
@@ -5046,6 +5241,40 @@ async def feedback_context(feedback_id: int) -> Optional[Dict[str, Any]]:
 
     context["available"] = True
     return context
+
+
+async def plan_review(plan_id: str) -> Dict[str, Any]:
+    """What one FoodChat meal plan contained, for somebody reading a session.
+
+    A session recorded that a plan was made — its type, version and size —
+    and never what was in it, so "rated the plan down" could not be checked
+    against the plan. Read from FoodChat on demand, for the same reasons the
+    rated exchange is: the plan lives there, a copy here would need its own
+    erasure path, and it works for every plan already made.
+
+    Never raises for the ordinary failures: a plan that died with its
+    conversation and a service that did not answer are both sentences.
+    """
+    from backend.foodchat import FOODCHAT
+    from exceptions import NotFoundError
+
+    result: Dict[str, Any] = {"plan_id": plan_id, "available": False, "reason": None, "plan": None}
+    try:
+        result["plan"] = await FOODCHAT.review_get(f"/foodchat/review/plans/{plan_id}")
+    except NotFoundError:
+        result["reason"] = (
+            "This plan is no longer stored. Plans are kept with their conversation "
+            "unless the member saved them."
+        )
+        return result
+    except Exception:
+        logger.info("analytics.plan_review_unavailable", extra={"plan_id": plan_id}, exc_info=True)
+        result["reason"] = "FoodChat did not answer."
+        return result
+    result["available"] = bool(result["plan"])
+    if not result["available"]:
+        result["reason"] = "FoodChat returned nothing for this plan."
+    return result
 
 
 async def complaint_counts(target_type: str, target_ids: List[str]) -> Dict[str, Dict[str, int]]:

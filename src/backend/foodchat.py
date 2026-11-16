@@ -214,12 +214,30 @@ class FoodChat:
         digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         return f"{member_id}.{expires}.{digest}"
 
+    #: Who a review read is signed as. FoodChat's review routes read what no
+    #: caller owns, so they accept exactly this and no member — and a review
+    #: read sent with no assertion at all was refused wherever the secret is
+    #: set. Not a member id: those are UUIDs, signed only after ownership.
+    REVIEWER = "reviewer"
+
+    @classmethod
+    async def review_get(cls, endpoint: str, **kwargs):
+        """A console reviewer's read of a FoodChat exchange or plan.
+
+        The admin/expert check and the expert-activity record are the
+        caller's; this only carries the gateway's word that it made them.
+        Signed in `request()` like everything else, as the reviewer.
+        """
+        return await cls.request("GET", endpoint, as_reviewer=True, **kwargs)
+
     @classmethod
     async def request(cls, method: str, endpoint: str, **kwargs):
         client = cls._require_client()
 
         secret = cls._assertion_secret()
-        member_id = cls._member_from(endpoint, kwargs)
+        # A review read names no member; it is vouched for as the reviewer.
+        reviewer = kwargs.pop("as_reviewer", False)
+        member_id = cls.REVIEWER if reviewer else cls._member_from(endpoint, kwargs)
         # The correlation id rides on every call, signed assertion or not, so
         # FoodChat's lines for this turn carry the same id as the gateway's.
         headers = {**context.outbound_headers(), **(kwargs.pop("headers", None) or {})}

@@ -1226,6 +1226,29 @@ async def feedback_in_context(request: Request, feedback_id: int):
     return result
 
 
+@router.get("/foodchat/plans/{plan_id}", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def foodchat_plan_review(request: Request, plan_id: str):
+    """What a FoodChat meal plan contained: its dishes, scores and checks.
+
+    Opened from a session's story, one plan at a time. FoodChat's output, not
+    anything the member typed — but it is a plan made for a named household,
+    so reading it is recorded like reading a rated exchange.
+    """
+    from analytics.reports import plan_review
+
+    cleaned = context.clean_id(plan_id)
+    if not cleaned:
+        raise DataError(detail="Malformed plan id")
+    result = await plan_review(cleaned)
+    RECORDER.record_event(
+        "expert.plan_read",
+        app="console",
+        props={"plan_id": cleaned, "available": result["available"]},
+    )
+    return result
+
+
 @router.post("/feedback/counts", dependencies=[Depends(auth("admin,expert"))])
 @render()
 async def feedback_counts(request: Request, body: FeedbackCountsRequest):
