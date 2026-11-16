@@ -492,6 +492,23 @@ async def list_qa_tips(
     )
 
 
+@router.get("/qa/quiz", dependencies=[Depends(auth())])
+@render()
+async def get_qa_quiz(
+    request: Request,
+    member_id: Optional[str] = None,
+    language: Optional[str] = None,
+    count: Optional[int] = Query(default=None, ge=1, le=5),
+):
+    # FoodScholar Learn's question of the day. Same contract as /qa/tips: the
+    # quiz is generated, so it is only in the reader's language if we say so.
+    return await FOODSCHOLAR.get_quiz(
+        member_id=member_id,
+        language=language or context.get_locale() or "en",
+        count=count,
+    )
+
+
 @router.get("/guidelines/storage/{artifact_uuid}", dependencies=[Depends(auth())])
 @render()
 async def get_guideline_storage(request: Request, artifact_uuid: str):

@@ -268,6 +268,26 @@ class FoodScholar:
         return await FOODSCHOLAR.get("/api/v1/qa/tips", params=params or None)
 
     @classmethod
+    async def get_quiz(
+        cls,
+        member_id: Optional[str] = None,
+        language: Optional[str] = None,
+        count: Optional[int] = None,
+    ):
+        # Today's quiz for FoodScholar Learn: multiple-choice questions written
+        # from FoodScholar's own sources, each with the passage it rests on.
+        # Generated and cached per day like the tips, so the same rules apply:
+        # language is part of the cache key and must be sent.
+        params: dict = {}
+        if member_id:
+            params["member_id"] = member_id
+        if language:
+            params["language"] = language
+        if count:
+            params["count"] = count
+        return await FOODSCHOLAR.get("/api/v1/qa/quiz", params=params or None)
+
+    @classmethod
     async def enqueue_article_enrichment(cls, urn: str, payload: dict):
         """Queue selective enrichment for a single catalog article."""
         return await cls.post(f"/api/v1/enrich/articles/{urn}", json=payload)

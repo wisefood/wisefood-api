@@ -654,6 +654,13 @@ class QARequest(BaseModel):
     clarification_response: Optional[QAClarificationResponse] = Field(
         default=None, description="Optional answer to a requested clarification"
     )
+    # FoodScholar Learn: "claim_check" asks FoodScholar to judge a claim the
+    # reader heard and return a structured verdict with the answer. Left out
+    # (None) it is not forwarded, and FoodScholar answers as it always has.
+    intent: Optional[Literal["answer", "claim_check"]] = Field(
+        default=None,
+        description="answer (default) or claim_check: judge the question as a claim and return claim_verdict",
+    )
 
 
 class QAFeedbackRequest(BaseModel):
