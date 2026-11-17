@@ -197,6 +197,22 @@ class TestPropagation:
         assert ctx_app.seen["outbound"] == {"X-Request-Id": "join-me"}
         assert response.headers["X-Request-Id"] == "join-me"
 
+    def test_outbound_headers_carry_the_interface_language(self, ctx_app):
+        """FoodChat writes its replies in this language; without it, it guessed."""
+        with TestClient(ctx_app.app) as client:
+            client.get("/probe", headers={"X-Request-Id": "join-me", "X-Locale": "sl"})
+        assert ctx_app.seen["outbound"] == {"X-Request-Id": "join-me", "X-Locale": "sl"}
+
+    def test_outbound_language_falls_back_to_accept_language(self, ctx_app):
+        with TestClient(ctx_app.app) as client:
+            client.get("/probe", headers={"Accept-Language": "hu-HU,hu;q=0.9,en;q=0.8"})
+        assert ctx_app.seen["outbound"]["X-Locale"] == "hu-HU"
+
+    def test_an_unsafe_language_is_not_forwarded(self, ctx_app):
+        with TestClient(ctx_app.app) as client:
+            client.get("/probe", headers={"X-Locale": "sl\r\nX-Evil: 1"})
+        assert "X-Locale" not in ctx_app.seen["outbound"]
+
     def test_context_does_not_leak_between_requests(self, ctx_app):
         with TestClient(ctx_app.app) as client:
             client.get("/probe", headers={"Authorization": "Bearer t1"})

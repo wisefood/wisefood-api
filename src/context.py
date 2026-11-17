@@ -214,9 +214,23 @@ def reset(tokens: Optional[List[Token]]) -> None:
 
 # ------------------------------------------------------------------ consumers --
 def outbound_headers() -> Dict[str, str]:
-    """Headers every downstream call should carry, so its logs join ours."""
+    """Headers every downstream call should carry.
+
+    The request id, so the service's logs join ours, and the interface
+    language, so a service that writes text for the reader (FoodChat's
+    replies, FoodScholar's answers) writes it in the language the reader
+    chose. The locale was bound on every request but never forwarded, so
+    FoodChat answered in whatever language it guessed: English for a
+    Slovenian reader.
+    """
+    headers: Dict[str, str] = {}
     request_id = _REQUEST_ID.get()
-    return {REQUEST_ID_HEADER: request_id} if request_id else {}
+    if request_id:
+        headers[REQUEST_ID_HEADER] = request_id
+    locale = _LOCALE.get()
+    if locale:
+        headers[LOCALE_HEADER] = locale
+    return headers
 
 
 def log_fields() -> Dict[str, Any]:
