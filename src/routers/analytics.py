@@ -1249,6 +1249,29 @@ async def foodchat_plan_review(request: Request, plan_id: str):
     return result
 
 
+@router.get("/foodchat/conversations/{session_id}", dependencies=[Depends(auth("admin,expert"))])
+@render()
+async def foodchat_conversation_review(request: Request, session_id: str):
+    """What was said in one FoodChat conversation, turn by turn.
+
+    Opened from a session's story, one conversation at a time. Unlike a plan,
+    this is what the member typed, so it is the most personal read the console
+    offers: reviewers only, and every read is recorded.
+    """
+    from analytics.reports import conversation_transcript
+
+    cleaned = context.clean_id(session_id)
+    if not cleaned:
+        raise DataError(detail="Malformed conversation id")
+    result = await conversation_transcript(cleaned)
+    RECORDER.record_event(
+        "expert.conversation_read",
+        app="console",
+        props={"session_id": cleaned, "available": result["available"]},
+    )
+    return result
+
+
 @router.post("/feedback/counts", dependencies=[Depends(auth("admin,expert"))])
 @render()
 async def feedback_counts(request: Request, body: FeedbackCountsRequest):

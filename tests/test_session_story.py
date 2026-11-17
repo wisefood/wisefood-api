@@ -244,6 +244,50 @@ class TestReadingAPlan:
         assert not result["available"] and result["reason"] == "FoodChat did not answer."
 
 
+class TestReadingAConversation:
+    """What was said in a FoodChat conversation, opened from a session's story."""
+
+    def test_only_reviewers_may_and_each_read_is_recorded(self):
+        from routers import analytics
+
+        route = next(
+            r for r in analytics.router.routes
+            if r.path.endswith("/foodchat/conversations/{session_id}")
+        )
+        dependency = route.dependencies[0].dependency
+        required = inspect.getclosurevars(dependency).nonlocals.get("required")
+        assert sorted(required) == ["admin", "expert"]
+        assert '"expert.conversation_read"' in inspect.getsource(analytics.foodchat_conversation_review)
+
+    def _read(self, monkeypatch, outcome):
+        import asyncio
+
+        from backend.foodchat import FOODCHAT
+
+        async def get(endpoint, *args, **kwargs):
+            assert endpoint == "/foodchat/review/sessions/c1/transcript"
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        monkeypatch.setattr(FOODCHAT, "review_get", get)
+        return asyncio.run(reports.conversation_transcript("c1"))
+
+    def test_a_conversation_comes_back(self, monkeypatch):
+        result = self._read(monkeypatch, {"session_id": "c1", "messages": [], "plans": []})
+        assert result["available"] and result["transcript"]["session_id"] == "c1"
+
+    def test_a_deleted_conversation_is_a_sentence(self, monkeypatch):
+        from exceptions import NotFoundError
+
+        result = self._read(monkeypatch, NotFoundError(detail="gone"))
+        assert not result["available"] and "no longer stored" in result["reason"]
+
+    def test_a_silent_service_is_a_different_sentence(self, monkeypatch):
+        result = self._read(monkeypatch, RuntimeError("connection refused"))
+        assert not result["available"] and result["reason"] == "FoodChat did not answer."
+
+
 class TestReadingARatedExchange:
     def test_the_foodchat_client_it_names_exists(self):
         """It imported a client that never existed, so every chat rating's

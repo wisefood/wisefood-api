@@ -5277,6 +5277,48 @@ async def plan_review(plan_id: str) -> Dict[str, Any]:
     return result
 
 
+async def conversation_transcript(session_id: str) -> Dict[str, Any]:
+    """One FoodChat conversation as it happened, for somebody reading a session.
+
+    A session's story said "Turn 3 · Chatted, answered in 12s" and never what
+    was said, so a researcher studying how FoodChat reads a request could not
+    see the request. This is every message in order, the intent FoodChat read
+    and the plan a reply made, and for each plan what it was asked for (the
+    message, FoodChat's reading, the profile planned around). Read from
+    FoodChat on demand like `plan_review`: the conversation lives there, and a
+    copy here would need its own erasure path.
+
+    Never raises for the ordinary failures: a deleted conversation and a
+    service that did not answer are both sentences.
+    """
+    from backend.foodchat import FOODCHAT
+    from exceptions import NotFoundError
+
+    result: Dict[str, Any] = {
+        "session_id": session_id, "available": False, "reason": None, "transcript": None,
+    }
+    try:
+        result["transcript"] = await FOODCHAT.review_get(
+            f"/foodchat/review/sessions/{session_id}/transcript"
+        )
+    except NotFoundError:
+        result["reason"] = (
+            "This conversation is no longer stored. The member may have deleted it, "
+            "and old conversations are pruned."
+        )
+        return result
+    except Exception:
+        logger.info(
+            "analytics.conversation_unavailable", extra={"session_id": session_id}, exc_info=True
+        )
+        result["reason"] = "FoodChat did not answer."
+        return result
+    result["available"] = bool(result["transcript"])
+    if not result["available"]:
+        result["reason"] = "FoodChat returned nothing for this conversation."
+    return result
+
+
 async def complaint_counts(target_type: str, target_ids: List[str]) -> Dict[str, Dict[str, int]]:
     """Open and total complaints for a set of things, in one statement.
 
