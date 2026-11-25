@@ -1,7 +1,7 @@
 import httpx
 import context
 from contextvars import ContextVar
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from main import config
 from exceptions import APIException
 import logging
@@ -544,6 +544,27 @@ class RecipeWrangler:
             f"/api/v1/recipes/{recipe_id}/adapt/simulate",
             json=payload,
             timeout=120.0,
+        )
+
+    @classmethod
+    async def get_adaptation(
+        cls,
+        recipe_id: str,
+        mode: str,
+        region: str,
+        allergens: Optional[List[str]] = None,
+        diet: Optional[str] = None,
+    ):
+        """One adaptation row (nutrition, sustainability, cost or time)."""
+        params: Dict[str, Any] = {"mode": mode, "region": region}
+        if allergens:
+            params["allergens"] = list(allergens)  # httpx repeats list params
+        if diet:
+            params["diet"] = diet
+        return await cls.get(
+            f"/api/v1/recipes/{recipe_id}/adaptations",
+            params=params,
+            timeout=120.0,  # a live nutrition run takes 18-60 s
         )
 
 RECIPEWRANGLER = RecipeWrangler.get_client()

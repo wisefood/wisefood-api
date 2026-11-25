@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, Depends, Query
-from typing import Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 from routers.generic import render
 import logging
@@ -399,6 +399,36 @@ async def adapt_recipe_simulate(
         weight_g=payload.swap.weight_g,
     )
     return RecipeAdaptSimulateResponse(**simulated)
+
+
+@router.get(
+    "/recipes/{recipe_id}/adaptations",
+    dependencies=[Depends(auth()), Depends(guest_budget("search"))],
+)
+@render()
+async def recipe_adaptation(
+    recipe_id: str,
+    request: Request,
+    region: RecipeRegionEnum,
+    mode: Literal["nutrition", "sustainability", "cost", "time"] = Query("nutrition"),
+    allergens: List[str] = Query(default=[], description="Member allergens; no swap may contain them. Repeat the parameter."),
+    diet: Optional[Literal["vegan", "vegetarian", "pescatarian"]] = Query(default=None),
+):
+    """One adaptation of the recipe for a mode and region (nutrition,
+    sustainability, cost or time), in the same row shape for every mode.
+
+    Passed through untouched: the shape is the recipe backend's
+    `AdaptationResponse`, whose nested parts differ per mode, so a gateway
+    schema would only drop fields the UI reads. With allergens or a diet the
+    backend never serves a stored row unchecked.
+    """
+    return await RECIPEWRANGLER.get_adaptation(
+        recipe_id=recipe_id,
+        mode=mode,
+        region=region.value,
+        allergens=allergens,
+        diet=diet,
+    )
 
 
 # ---------------------------------------------------------------------------
